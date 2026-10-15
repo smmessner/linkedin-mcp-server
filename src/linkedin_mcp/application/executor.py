@@ -400,16 +400,32 @@ class CapabilityExecutor:
                 request,
                 result_limit=self._pagination.traversal_limit(lease, request.page_size),
             )
-            inventory_incomplete = (
-                self._policy.mode == "job-search-only"
-                and coverage.stop_reason
-                in {
+            issues = list(coverage.inventory_issues)
+            observed_keys = frozenset(job.job_id for job in jobs)
+            if self._policy.mode == "job-search-only":
+                if lease.prior_cursor is not None:
+                    if lease.inventory_count != coverage.advertised_result_count:
+                        issues.append("advertised_count_changed_between_calls")
+                    if not (lease.seen_keys | lease.inventory_keys).issubset(observed_keys):
+                        issues.append("inventory_membership_changed_between_calls")
+                if coverage.stop_reason in {
                     StopReason.VISIBLE_PAGE_COMPLETE,
                     StopReason.NO_NEW_RESULTS,
-                }
-                and coverage.advertised_result_count is not None
-                and coverage.advertised_result_count > len(jobs)
-            )
+                }:
+                    if coverage.inventory_status != "reconciled":
+                        issues.append("terminal_inventory_unverified")
+                    if coverage.advertised_result_count != len(jobs):
+                        issues.append("advertised_inventory_mismatch")
+            inventory_incomplete = self._policy.mode == "job-search-only" and bool(issues)
+            if inventory_incomplete:
+                coverage = coverage.model_copy(
+                    update={
+                        "inventory_status": "interrupted"
+                        if coverage.inventory_status == "interrupted"
+                        else "uncertain",
+                        "inventory_issues": tuple(dict.fromkeys(issues)),
+                    }
+                )
             page = select_page(
                 jobs,
                 key=lambda job: job.job_id,
@@ -445,6 +461,8 @@ class CapabilityExecutor:
                 returned_keys=page.keys,
                 provider_has_more=provider_has_more,
                 force_truncated=inventory_incomplete,
+                inventory_count=coverage.advertised_result_count,
+                inventory_keys=observed_keys,
             )
             output = JobSearchOutput(
                 context_id=request.context_id,

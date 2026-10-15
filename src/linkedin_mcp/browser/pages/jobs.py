@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import urlencode, urljoin
@@ -14,6 +15,12 @@ from pydantic import HttpUrl
 
 from linkedin_mcp.browser.convergence import CollectionSettleOutcome
 from linkedin_mcp.browser.manager import BrowserManager
+from linkedin_mcp.browser.pages.job_enrichment import (
+    description_state,
+    visible_application,
+    visible_posting,
+)
+from linkedin_mcp.domain.job_metadata import compensation_from_text, washington_from_description
 from linkedin_mcp.domain.models import (
     EvidenceField,
     JobApplyMethod,
@@ -32,7 +39,7 @@ from linkedin_mcp.domain.models import (
     JobWorkplaceType,
     StopReason,
 )
-from linkedin_mcp.errors import ParserDriftError
+from linkedin_mcp.errors import BrowserUnavailableError, ParserDriftError
 from linkedin_mcp.policy import (
     canonical_job_url,
     canonical_profile_url,
@@ -304,10 +311,15 @@ def _visible_workplace(lines: list[str]) -> JobWorkplaceType | None:
     return None
 
 
-async def _job_search_result_count(page: Page) -> tuple[int | None, bool]:
-    header = page.locator("main .scaffold-layout__list-header").first
+async def _job_search_result_count(
+    page: Page, *, selected_only: bool = False
+) -> tuple[int | None, bool]:
+    headers = page.locator("main .scaffold-layout__list-header")
+    if selected_only and await headers.count() != 1:
+        return None, False
+    header = headers.first
     text = await _first_text(header)
-    if text is None:
+    if text is None and not selected_only:
         text = await _first_text(page.locator("main"))
     if text is None:
         return None, False
@@ -483,14 +495,6 @@ async def _visible_job_title(
                 return candidate
 
     raise ParserDriftError("LinkedIn job detail has no confidently identifiable visible title.")
-
-
-async def _visible_description(description_box: Locator) -> str:
-    description = (await description_box.inner_text()).strip()
-    description = re.sub(r"\s*(?:…|\.\.\.)\s*more\s*$", "", description, flags=re.I).strip()
-    if not description:
-        raise ParserDriftError("LinkedIn job detail has an empty About the job description.")
-    return description
 
 
 def _add_job_search_filters(
@@ -769,11 +773,14 @@ async def _resolve_named_facets(
 
 
 class JobSearchPage:
-    def __init__(self, browser: BrowserManager, *, max_pages: int) -> None:
+    def __init__(
+        self, browser: BrowserManager, *, max_pages: int, verify_inventory: bool = False
+    ) -> None:
         if max_pages < 1:
             raise ValueError("Job search must allow at least one internal page.")
         self._browser = browser
         self._max_pages = max_pages
+        self._verify_inventory = verify_inventory
 
     @staticmethod
     def build_url(
@@ -811,6 +818,10 @@ class JobSearchPage:
         stop_reason = StopReason.SAFETY_BOUND
         advertised_result_count: int | None = None
         advertised_result_count_is_lower_bound = False
+        counts: list[int | None] = []
+        issues: list[str] = []
+        duplicate_count = 0
+        terminal = False
         resolved_facets = _ResolvedJobSearchFacets()
         async with self._browser.page() as page:
             if _has_named_facets(request.filters):
@@ -819,70 +830,119 @@ class JobSearchPage:
                 resolved_facets = await _resolve_named_facets(page, request.filters)
             first_url = self.build_url(request, resolved_facets=resolved_facets)
             for page_index in range(self._max_pages):
-                await self._browser.navigate(
-                    page,
-                    self.build_url(
-                        request,
-                        page_index,
-                        resolved_facets=resolved_facets,
-                    ),
-                )
-                rendered_state = await _wait_for_job_search_state(page)
-                pages_visited += 1
-                if rendered_state is CollectionSettleOutcome.EXPLICIT_END:
-                    page_texts.append(await self.extract_visible_text(page))
-                    stop_reason = (
-                        StopReason.NO_NEW_RESULTS
-                        if not jobs_by_id
-                        else StopReason.VISIBLE_PAGE_COMPLETE
+                try:
+                    await self._browser.navigate(
+                        page, self.build_url(request, page_index, resolved_facets=resolved_facets)
                     )
+                    rendered_state = await _wait_for_job_search_state(page)
+                    pages_visited += 1
+                    count, lower_bound = await _job_search_result_count(
+                        page, selected_only=self._verify_inventory
+                    )
+                    counts.append(count)
+                    advertised_result_count_is_lower_bound |= lower_bound
+                    if advertised_result_count is None:
+                        advertised_result_count = count
+                    if rendered_state is CollectionSettleOutcome.EXPLICIT_END:
+                        if self._verify_inventory:
+                            for _ in range(3):
+                                await page.wait_for_timeout(75)
+                                current_count, _ = await _job_search_result_count(
+                                    page, selected_only=self._verify_inventory
+                                )
+                                counts.append(current_count)
+                            if await page.locator("main li[data-occludable-job-id]").count():
+                                issues.append("empty_inventory_still_rendering")
+                        page_texts.append(await self.extract_visible_text(page))
+                        terminal = True
+                        stop_reason = (
+                            StopReason.NO_NEW_RESULTS
+                            if not jobs_by_id
+                            else StopReason.VISIBLE_PAGE_COMPLETE
+                        )
+                        break
+                    page_jobs = await self.extract_visible_jobs(page)
+                    if not page_jobs:
+                        raise ParserDriftError(
+                            "LinkedIn Jobs rendered shells without complete job cards."
+                        )
+                    after_count, after_lower = await _job_search_result_count(
+                        page, selected_only=self._verify_inventory
+                    )
+                    counts.append(after_count)
+                    advertised_result_count_is_lower_bound |= after_lower
+                    if self._verify_inventory:
+                        current_ids = await page.locator(
+                            "main li[data-occludable-job-id]"
+                        ).evaluate_all(
+                            "nodes => nodes.map(n => n.getAttribute('data-occludable-job-id'))"
+                        )
+                        if tuple(current_ids) != tuple(job.job_id for job in page_jobs):
+                            issues.append("rendered_inventory_changed")
+                        if await page.locator(
+                            'main [aria-busy="true"], main [role="progressbar"], '
+                            "main .jobs-ghost-placeholder"
+                        ).count():
+                            issues.append("loading_not_finished")
+                        tail = page.get_by_role(
+                            "button", name=re.compile(r"^(?:show|load) more", re.I)
+                        )
+                        if any([await tail.nth(i).is_visible() for i in range(await tail.count())]):
+                            issues.append("tail_control_untraversed")
+                except (BrowserUnavailableError, PlaywrightError):
+                    if not self._verify_inventory or not jobs_by_id:
+                        raise
+                    issues.append("search_interrupted")
                     break
-
-                page_jobs = await self.extract_visible_jobs(page)
-                if not page_jobs:
-                    raise ParserDriftError(
-                        "LinkedIn Jobs rendered result shells but no complete current job cards."
-                    )
-                current_count, current_is_lower_bound = await _job_search_result_count(page)
-                if advertised_result_count is None and current_count is not None:
-                    advertised_result_count = current_count
-                    advertised_result_count_is_lower_bound = current_is_lower_bound
-
-                added = 0
-                retained_page_jobs: list[JobSummary] = []
+                retained: list[JobSummary] = []
                 for job in page_jobs:
                     if job.job_id in jobs_by_id:
+                        duplicate_count += 1
                         continue
                     jobs_by_id[job.job_id] = job
-                    retained_page_jobs.append(job)
-                    added += 1
+                    retained.append(job)
                     if len(jobs_by_id) >= limit:
                         stop_reason = StopReason.RESULT_LIMIT
                         break
-                header_text = await _job_search_header_text(page)
+                header = await _job_search_header_text(page)
                 page_texts.append(
-                    "\n\n".join(
-                        value
-                        for value in (
-                            header_text,
-                            *(job.visible_text for job in retained_page_jobs),
-                        )
-                        if value
-                    )
+                    "\n\n".join(v for v in (header, *(j.visible_text for j in retained)) if v)
                 )
                 if len(jobs_by_id) >= limit:
                     break
                 if not await _job_search_has_next_page(page):
-                    stop_reason = (
-                        StopReason.VISIBLE_PAGE_COMPLETE
-                        if jobs_by_id
-                        else StopReason.NO_NEW_RESULTS
-                    )
+                    terminal = True
+                    stop_reason = StopReason.VISIBLE_PAGE_COMPLETE
                     break
-                if added == 0:
-                    continue
-        captured_at = datetime.now(UTC)
+            if self._verify_inventory:
+                if (
+                    not terminal
+                    and stop_reason == StopReason.SAFETY_BOUND
+                    and pages_visited >= self._max_pages
+                    and "search_interrupted" not in issues
+                ):
+                    issues.append("page_traversal_bound")
+                if len(set(counts)) > 1:
+                    issues.append("advertised_count_changed")
+                if any(count is None for count in counts) or not counts:
+                    issues.append("advertised_count_unavailable")
+                if advertised_result_count_is_lower_bound:
+                    issues.append("advertised_count_is_lower_bound")
+                if terminal and advertised_result_count != len(jobs_by_id):
+                    issues.append("advertised_inventory_mismatch")
+                if terminal and issues:
+                    stop_reason = StopReason.SAFETY_BOUND
         jobs = tuple(jobs_by_id.values())
+        verified = self._verify_inventory and terminal and not issues
+        inventory_status = (
+            "reconciled"
+            if verified
+            else "interrupted"
+            if "search_interrupted" in issues
+            else "uncertain"
+            if issues or terminal
+            else "partial"
+        )
         coverage = JobSearchCoverage(
             query=request.query,
             location=request.location,
@@ -894,7 +954,12 @@ class JobSearchPage:
             stop_reason=stop_reason,
             advertised_result_count=advertised_result_count,
             advertised_result_count_is_lower_bound=advertised_result_count_is_lower_bound,
-            captured_at=captured_at,
+            inventory_status=inventory_status,
+            inventory_issues=tuple(dict.fromkeys(issues)),
+            observed_result_counts=tuple(counts),
+            observed_job_ids=tuple(jobs_by_id),
+            duplicate_count=duplicate_count,
+            captured_at=datetime.now(UTC),
         )
         return jobs, coverage, "\n\n--- page boundary ---\n\n".join(page_texts), first_url
 
@@ -916,6 +981,8 @@ class JobSearchPage:
             "element.getAttribute('data-occludable-job-id')).filter(Boolean)"
         )
         job_ids = tuple(value for value in raw_ids if isinstance(value, str))
+        if len(job_ids) > 500:
+            raise ParserDriftError("LinkedIn Jobs exceeded the bounded raw-card inventory.")
         if len(set(job_ids)) != len(job_ids):
             raise ParserDriftError("LinkedIn Jobs returned duplicate result-card identities.")
 
@@ -1025,6 +1092,8 @@ class JobSearchPage:
             location=location,
             workplace_type=workplace_type,
             listed_at_text=listed_at_text,
+            posting=await visible_posting(card, visible_text),
+            compensation=compensation_from_text("\n".join(insights)),
             easy_apply=easy_apply,
             verified=verified,
             promoted=promoted,
@@ -1048,24 +1117,21 @@ class JobDetailPage:
     @staticmethod
     async def _wait_until_ready(page: Page, job_id: str) -> None:
         main = page.locator("main")
-        about_heading = main.get_by_role(
-            "heading",
-            name=re.compile(r"^about the job$", re.I),
-        )
         save_control = main.get_by_role(
             "button",
             name=re.compile(r"^save (?:the )?job$", re.I),
         )
         try:
             await main.first.wait_for(state="visible")
-            await about_heading.first.wait_for(state="visible")
             await save_control.first.wait_for(state="visible")
             await main.locator(f'a[href="{canonical_job_url(job_id)}"]').first.wait_for(
                 state="visible"
             )
-            await main.locator('[data-testid="expandable-text-box"]').first.wait_for(
-                state="visible"
-            )
+            with suppress(PlaywrightTimeoutError):
+                await main.locator('[data-testid="expandable-text-box"]').first.wait_for(
+                    state="visible",
+                    timeout=1000,
+                )
         except PlaywrightTimeoutError as error:
             raise ParserDriftError(
                 "LinkedIn job detail did not render its visible About the job section."
@@ -1073,7 +1139,10 @@ class JobDetailPage:
 
     async def _expand_description(self, page: Page) -> None:
         main = page.locator("main").first
-        _, description_box = await _about_job_container(main)
+        try:
+            _, description_box = await _about_job_container(main)
+        except ParserDriftError:
+            return
         expand_button = description_box.locator('[data-testid="expandable-text-button"]')
         if await expand_button.count() == 0:
             return
@@ -1084,11 +1153,8 @@ class JobDetailPage:
         click_target = spans.last if await spans.count() > 0 else expand_button
         try:
             await self._browser.click_visible_control(page, click_target)
-        except PlaywrightError as error:
-            raise ParserDriftError(
-                "LinkedIn job detail exposed its description expansion control "
-                "but it could not be activated."
-            ) from error
+        except PlaywrightError:
+            return
 
         for _ in range(20):
             if await expand_button.count() == 0:
@@ -1099,9 +1165,7 @@ class JobDetailPage:
             if current_height > before_height:
                 return
             await page.wait_for_timeout(100)
-        raise ParserDriftError(
-            "LinkedIn job detail did not visibly expand its About the job description."
-        )
+        return
 
     @staticmethod
     async def extract_visible_job(page: Page, job_id: str) -> JobDetailObservation:
@@ -1192,15 +1256,33 @@ class JobDetailPage:
         insights = tuple(line for line in lines if line not in excluded_lines)
         promoted = any(line.casefold().startswith("promoted") for line in insights)
 
-        _, description_box = await _about_job_container(main)
-        description_text = await _visible_description(description_box)
+        try:
+            _, description_box = await _about_job_container(main)
+            description_text, completeness, completeness_reason = await description_state(
+                description_box
+            )
+        except ParserDriftError:
+            description_text, completeness, completeness_reason = (
+                None,
+                "unknown",
+                "Description container unavailable.",
+            )
+        application_url, application_status, application_evidence = await visible_application(
+            top_card
+        )
+        if application_url is not None:
+            if apply_method == JobApplyMethod.EASY_APPLY:
+                application_url, application_status, application_evidence = None, "ambiguous", ()
+            else:
+                apply_method = JobApplyMethod.EXTERNAL
+        posting = await visible_posting(top_card, top_text)
         hiring_team, hiring_team_text = await _visible_hiring_team(main)
         visible_text = "\n\n".join(
             value
             for value in (
                 top_text,
                 hiring_team_text,
-                f"About the job\n\n{description_text}",
+                f"About the job\n\n{description_text or ''}",
             )
             if value
         )
@@ -1250,6 +1332,17 @@ class JobDetailPage:
             listed_at_text=listed_at_text,
             applicant_text=applicant_text,
             description_text=description_text,
+            description_completeness=completeness,
+            description_completeness_reason=completeness_reason,
+            washington_eligibility=washington_from_description(
+                description_text, complete=completeness == "complete"
+            ),
+            compensation=compensation_from_text("\n".join((*insights, description_text or ""))),
+            posting=posting,
+            application_url=HttpUrl(application_url) if application_url else None,
+            application_url_status=application_status,
+            application_url_source_href=application_url,
+            application_url_evidence=application_evidence,
             apply_method=apply_method,
             easy_apply=apply_method is JobApplyMethod.EASY_APPLY,
             promoted=promoted,

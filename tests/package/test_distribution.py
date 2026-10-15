@@ -73,7 +73,10 @@ def test_build_configuration_packages_only_the_standalone_server() -> None:
     )
     assert wheel["packages"] == ["src/linkedin_mcp"]
     assert dependencies.isdisjoint(FORBIDDEN_RUNTIME_DEPENDENCIES)
-    assert project["scripts"] == {"linkedin-mcp": "linkedin_mcp.__main__:main"}
+    assert project["scripts"] == {
+        "linkedin-mcp": "linkedin_mcp.__main__:main",
+        "linkedin-job-discovery": "linkedin_mcp.__main__:discovery_main",
+    }
 
     production_sources = "\n".join(
         path.read_text(encoding="utf-8")

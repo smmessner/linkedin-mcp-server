@@ -121,6 +121,7 @@ def create_production_container(settings: Settings) -> AppContainer:
         job_search=JobSearchPage(
             browser,
             max_pages=settings.job_search_max_pages_per_call,
+            verify_inventory=settings.access_mode == "job-search-only",
         ),
         job_detail=JobDetailPage(browser),
         people_search=PeopleSearchPage(

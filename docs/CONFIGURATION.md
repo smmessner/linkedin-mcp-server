@@ -10,6 +10,18 @@ For `uvx` installations, put environment variables in the MCP client's server
 entry. A source checkout can also use an uncommitted `.env` file based on
 [`.env.example`](../.env.example).
 
+## Dedicated job-discovery startup
+
+Use `linkedin-job-discovery` for future supervised discovery. It requires an
+explicit `LINKEDIN_MCP_ACCESS_MODE=job-search-only`, rejects a missing/invalid or
+standard setting, forces automatic login off, and supports only process-bound
+stdio. It never elects a shared/background runtime or listens on HTTP. The sample
+[`mcp-client.example.json`](../packaging/job-discovery/mcp-client.example.json) is
+not activated by this repository. This setting does not authorize live access.
+
+Generic `linkedin-mcp serve` preserves its standard default and must not replace
+this discovery launcher. See [validation and acceptance plan](JOB_DISCOVERY.md).
+
 ## Tool availability
 
 Set `LINKEDIN_MCP_ACCESS_MODE=job-search-only` to expose exactly:

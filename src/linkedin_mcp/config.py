@@ -113,3 +113,15 @@ def runtime_configuration_fingerprint(settings: Settings) -> str:
     values.pop("runtime_start_timeout_seconds", None)
     canonical = json.dumps(values, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+class JobDiscoverySettings(Settings):
+    """Dedicated discovery startup requires an explicit restricted value."""
+
+    @model_validator(mode="after")
+    def require_restriction(self) -> JobDiscoverySettings:
+        if "access_mode" not in self.model_fields_set or self.access_mode != "job-search-only":
+            raise ValueError("Job discovery requires explicit access_mode=job-search-only")
+        if self.transport != "stdio":
+            raise ValueError("The dedicated discovery launcher supports only stdio")
+        return self

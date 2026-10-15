@@ -24,6 +24,13 @@ in process memory.
 
 ## Restricted job discovery
 
+The dedicated `linkedin-job-discovery` launcher requires explicit restricted
+configuration and exits before container creation if it is missing or standard.
+It uses only process-bound stdio, with no shared/background runtime or listener.
+The generic upstream launcher retains its standard default; future discovery
+configuration must use the dedicated launcher. No launch configuration is
+activated by this PR.
+
 `LINKEDIN_MCP_ACCESS_MODE=job-search-only` is enforced by the server, independent
 of client approvals. Only job search, job detail, and the three local inspection
 tools are registered. The worker and executor independently deny every excluded

@@ -109,8 +109,9 @@ Find remote software engineering jobs in India posted on LinkedIn this week.
 [status-checked-on]: https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fprakharagarwal-dev%2Flinkedin-mcp-server%2Ftool-status%2Fbadges%2Fchecked-on.json&label=
 [status-not-checked]: https://img.shields.io/badge/status-not_checked-lightgrey?label=
 
-For server-enforced job discovery, configure
-`LINKEDIN_MCP_ACCESS_MODE=job-search-only`. This exposes only job search/detail
+For server-enforced job discovery, use `linkedin-job-discovery` with explicit
+`LINKEDIN_MCP_ACCESS_MODE=job-search-only`. This dedicated stdio launcher fails
+startup if the restricted setting is absent or standard. This exposes only job search/detail
 and three local status tools, disables automatic login, and denies excluded
 operations even when called directly. Standard mode remains the default.
 See [configuration](docs/CONFIGURATION.md) and the

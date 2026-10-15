@@ -46,7 +46,7 @@ class Scenario(BaseModel):
 
 
 def scenarios() -> tuple[Scenario, ...]:
-    data = json.loads((ROOT / "job_discovery/scenarios.json").read_text())
+    data = json.loads((ROOT / "job_discovery/scenarios.json").read_text(encoding="utf-8"))
     assert data["provenance"] == "synthetic_only"
     assert data["contains_live_data"] is False
     return tuple(Scenario.model_validate(s) for s in data["scenarios"])
@@ -80,7 +80,9 @@ def search_html(cards: str, *, advertised: int) -> str:
 
 def detail_html(s: Scenario) -> str:
     # Reuse the established semantic layout with entirely synthetic content.
-    template = (ROOT / "linkedin/jobs/latest/detail-external-apply.html").read_text()
+    template = (ROOT / "linkedin/jobs/latest/detail-external-apply.html").read_text(
+        encoding="utf-8"
+    )
     return (
         template.replace("4100000002", s.id)
         .replace("Software Development Engineer", escape(s.title))
@@ -115,7 +117,9 @@ async def test_geographies_workplace_freshness_and_complete_descriptions(
                 monkeypatch.setattr(
                     container.executor,
                     "_job_search",
-                    JobSearchPage(cast(BrowserManager, fixture), max_pages=1),
+                    JobSearchPage(
+                        cast(BrowserManager, fixture), max_pages=1, verify_inventory=True
+                    ),
                 )
                 workplace = JobWorkplaceType(s.workplace.casefold().replace("-", "_"))
                 request = JobSearchInput(
@@ -161,11 +165,10 @@ async def test_geographies_workplace_freshness_and_complete_descriptions(
                 if s.compensation:
                     assert detail.job.description_text is not None
                     assert s.compensation in detail.job.description_text
-                # Characterize gaps: raw text exists without typed fields or decisions.
-                assert (
-                    not {"compensation", "application_url", "washington_eligible"}
-                    & JobDetailObservation.model_fields.keys()
-                )
+                assert detail.job.description_completeness == "complete"
+                if s.application_url:
+                    assert str(detail.job.application_url) == s.application_url
+                assert "washington_eligibility" in JobDetailObservation.model_fields
                 assert len(detail.sources) == 1
         finally:
             await browser.close()
@@ -188,7 +191,7 @@ async def test_duplicates_missing_information_and_cursor_pages(
         monkeypatch.setattr(
             container.executor,
             "_job_search",
-            JobSearchPage(cast(BrowserManager, fixture), max_pages=1),
+            JobSearchPage(cast(BrowserManager, fixture), max_pages=1, verify_inventory=True),
         )
         try:
             request = JobSearchInput(context_id="synthetic", request_id="page-1", page_size=1)
@@ -228,16 +231,16 @@ async def test_incomplete_inventory_is_truncated_in_restricted_executor(
         fixture = FixtureBrowser(page, search_html(card(s), advertised=4))
         try:
             _, coverage, _, _ = await JobSearchPage(
-                cast(BrowserManager, fixture), max_pages=1
+                cast(BrowserManager, fixture), max_pages=1, verify_inventory=True
             ).collect(JobSearchInput(context_id="synthetic", request_id="incomplete"))
-            # Existing limitation, not acceptance: absent next control masks a mismatch.
-            assert coverage.stop_reason == StopReason.VISIBLE_PAGE_COMPLETE
+            # Strict mode independently checks the advertised selected inventory.
+            assert coverage.stop_reason == StopReason.SAFETY_BOUND
             assert coverage.advertised_result_count == 4
             assert coverage.result_count == 1
             monkeypatch.setattr(
                 container.executor,
                 "_job_search",
-                JobSearchPage(cast(BrowserManager, fixture), max_pages=1),
+                JobSearchPage(cast(BrowserManager, fixture), max_pages=1, verify_inventory=True),
             )
             result = await container.executor.search_jobs(
                 JobSearchInput(context_id="synthetic", request_id="restricted-incomplete")

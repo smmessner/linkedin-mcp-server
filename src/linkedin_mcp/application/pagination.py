@@ -33,6 +33,8 @@ class _CursorState:
     seen_keys: tuple[str, ...]
     expires_at: datetime
     reserved_by: str | None = None
+    inventory_count: int | None = None
+    inventory_keys: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +47,8 @@ class PaginationLease:
     scan_id: str
     seen_keys: frozenset[str]
     prior_cursor: str | None
+    inventory_count: int | None = None
+    inventory_keys: frozenset[str] = frozenset()
 
     @property
     def cumulative_count(self) -> int:
@@ -186,6 +190,8 @@ class PaginationManager:
                 scan_id=state.scan_id,
                 seen_keys=frozenset(state.seen_keys),
                 prior_cursor=request.cursor,
+                inventory_count=state.inventory_count,
+                inventory_keys=state.inventory_keys,
             )
             self._leases[lease_id] = request.cursor
             return lease
@@ -214,6 +220,8 @@ class PaginationManager:
         returned_keys: tuple[str, ...],
         provider_has_more: bool,
         force_truncated: bool = False,
+        inventory_count: int | None = None,
+        inventory_keys: frozenset[str] = frozenset(),
     ) -> PaginationMetadata:
         if len(set(returned_keys)) != len(returned_keys):
             raise ValueError("A pagination page cannot contain duplicate stable identities.")
@@ -246,6 +254,8 @@ class PaginationManager:
                     binding=lease.binding,
                     scan_id=lease.scan_id,
                     seen_keys=combined,
+                    inventory_count=inventory_count,
+                    inventory_keys=frozenset(sorted(inventory_keys)[: self._max_seen_items + 1]),
                     expires_at=expires_at,
                 )
             self._leases.pop(lease.lease_id, None)

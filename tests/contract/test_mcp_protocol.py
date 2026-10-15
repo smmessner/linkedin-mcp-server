@@ -711,9 +711,12 @@ def protocol_container(root: Path, *, access_mode: AccessMode = "standard") -> A
 
 @asynccontextmanager
 async def protocol_session(
-    root: Path, *, access_mode: AccessMode = "standard"
+    root: Path,
+    *,
+    access_mode: AccessMode = "standard",
+    app_container: AppContainer | None = None,
 ) -> AsyncGenerator[ClientSession]:
-    container = protocol_container(root, access_mode=access_mode)
+    container = app_container or protocol_container(root, access_mode=access_mode)
     mcp = create_mcp_server(container)
     server_to_client_send, server_to_client_receive = anyio.create_memory_object_stream[
         SessionMessage

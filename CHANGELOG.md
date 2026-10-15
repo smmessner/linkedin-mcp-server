@@ -8,6 +8,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Typed job compensation ranges with uncertainties, safe visible external Apply
+  hrefs, description-evidenced Washington eligibility, rendered-description
+  completeness, and explicit original/repost timestamps without guessed dates.
+- Strict restricted-mode selected-inventory reconciliation, changing-count and
+  prefix-membership detection across cursors, honest interruption/bound reporting,
+  and synthetic regressions through production page objects and official MCP.
+- Required-restriction `linkedin-job-discovery` stdio launcher and inert client
+  sample, with a bounded supervised acceptance proposal and ATS investment assessment.
+
 - Optional fail-closed `job-search-only` mode with five MCP tools, independent
   queue/executor enforcement, filtered capability inventory, no evidence resource,
   disabled automatic login, and policy-aware runtime identity. Restricted job

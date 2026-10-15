@@ -1,167 +1,234 @@
-# Restricted job discovery: offline validation and future integration
+# Restricted job discovery: offline implementation and acceptance proposal
 
-Scope: personal fork `smmessner/linkedin-mcp-server`, development branch
-`dev/job-discovery-read-only`, based on `0027edc4eba3398a19173680f1063e9d7cdfa2a6`.
-No LinkedIn authentication, live pages, external integration, job-document or ledger
-edits, persistent deployment, or merge is part of this change.
+Personal fork: `smmessner/linkedin-mcp-server`; existing draft PR #1 and branch
+`dev/job-discovery-read-only`. No authentication, live LinkedIn requests, external
+integration, continuous monitoring, application automation, persistent deployment,
+Google Drive/ledger edits, or merge is authorized or performed by this work.
 
-## Server restriction
+## Startup and execution boundary
 
-Configure `LINKEDIN_MCP_ACCESS_MODE=job-search-only`. Only these tools exist:
-`linkedin.jobs.search`, `linkedin.jobs.get`, `linkedin.server.status`,
-`linkedin.session.status`, and `linkedin.capabilities.list`.
+For future supervised discovery use **`linkedin-job-discovery`**, the dedicated
+process-bound stdio launcher. It uses `JobDiscoverySettings`, which requires an
+explicit `LINKEDIN_MCP_ACCESS_MODE=job-search-only` value. Missing, empty, invalid,
+or `standard` settings fail before constructing a browser/container. HTTP transport
+is rejected. Automatic login is forced off. This launcher neither attaches to a
+shared runtime nor spawns a background service. The sample
+[`mcp-client.example.json`](../packaging/job-discovery/mcp-client.example.json) is
+configuration only; it has not been activated. Future discovery launchers must use
+this settings contract rather than the general-purpose startup path.
 
-The fixed allowlist excludes unrelated reads and every account-changing tool.
-Unknown tools are excluded too. MCP registration rejects direct calls; the worker
-and executor independently deny excluded capabilities, including with a broad
-registry supplied by another composition root. Denial precedes queue submission,
-read replay, persistence, and provider access. `access_denied` is the internal
-safe error code. MCP calls to absent tools receive an unknown-tool error.
+The generic `linkedin-mcp serve` retains standard mode as its upstream default;
+it must not be substituted for the dedicated discovery launcher. Restricted shared
+runtimes still include the policy in their attachment fingerprint. The launcher
+requirement prevents accidental default selection, not an authorized local operator
+from executing different code or changing their own configuration.
 
-Automatic login is forced off. The mode participates in runtime identity so a
-restricted client cannot silently reuse a differently configured standard runtime.
-The captured-source resource is omitted to prevent unrelated stored-data access.
-Inline job results and source references remain, but those references cannot be
-resolved through the resource API in this mode. Standard mode retains upstream
-registration, approval behavior, automatic-login configuration, and resources.
+Only these tools are exposed and executable:
 
-## Synthetic validation and capability gaps
+- `linkedin.jobs.search`
+- `linkedin.jobs.get`
+- `linkedin.server.status`
+- `linkedin.session.status`
+- `linkedin.capabilities.list`
 
-Fixtures in `tests/fixtures/job_discovery/scenarios.json` contain invented employers,
-roles, descriptions, and `example.org` application links. They are synthetic-only,
-not live-accepted or recorded LinkedIn data. Tests use real Playwright against
-in-memory HTML with browser requests aborted, production page objects, and the
-restricted executor. Separate official MCP client tests verify all five approved
-operations and denial of all 19 excluded operations. The existing suite also
-exercises full standard-mode tools and offline simulated actions.
+MCP registration, queue submission, and execution independently enforce the fixed
+allowlist. All 19 excluded capabilities and unknown future names fail direct
+invocation. Capability inventory contains only the two job operations. The evidence
+resource is omitted, including for known source IDs; typed job results retain inline
+evidence and source references. No application, messaging, posting, invitation,
+generic browser, or unrelated data-access tool is added.
 
-| Requirement | Offline evidence / existing support | Additional development or validation |
+## Typed extraction: verified versus unsupported
+
+All verification below is **synthetic-only**, not live acceptance. Real production
+page objects parse in-memory HTML; browser requests are aborted. Official MCP
+client tests verify nested structured output as well as the existing allowlist.
+
+| Area | Verified behavior | Limits / deliberate unknowns |
 | --- | --- | --- |
-| Remote jobs eligible for Washington | WA location plus remote filter; descriptions retain explicit WA permission, unspecified states, and WA exclusion | No typed eligibility decision. Review employer state restrictions; remote and geography filters alone do not prove eligibility |
-| Seattle hybrid and onsite | Both workplace filters and Seattle location serialize and extract correctly | Validate real radius/geography behavior only in a separately authorized stage |
-| Sacramento and San Diego | Each city serializes and extracts with synthetic roles | No live inventory or relevance claim |
-| Past 24 hours / 7 days | Both windows exercised across all seven scenarios; query values `r86400` and `r604800` | Filters request a window; no independent absolute posting-time verification or guarantee about reposts |
-| Complete descriptions | Exact full synthetic descriptions survive detail extraction; existing tests cover expand-button behavior and delayed rendering | No typed description-completeness indicator; missing description can be null. Live layouts remain unvalidated |
-| Employer, title, location | Typed fields and evidence; employer can be null; missing search-card location rejects with parser drift | A missing field must remain unknown; do not infer employer or eligibility |
-| Compensation when present | Salary text survives in description and can appear in search insights | No structured currency, pay range, or pay-period fields; no compensation normalizer |
-| Application URL | Canonical LinkedIn job URL is returned; application method distinguishes external/Easy Apply/unavailable | External employer destination is not returned even when a visible link exists. No new clicks or navigation were added |
-| Pagination | Existing cursor binding/replay tests plus synthetic disjoint pages and terminal metadata | A changing live inventory is not a stable snapshot |
-| Duplicates | Duplicate identities within a rendered page reject with parser drift; repeated identities across rescans/cursor pages are suppressed | No cross-run persistence or cross-source/repost matching |
-| Incomplete results | Restricted executor converts a terminal advertised-count shortfall into `safety_bound`, `truncated=true`, no continuation | Upstream page collector still reports completion on absent next controls; standard behavior is preserved. Unknown or inaccurate counts and live terminal proof require further work |
-| Missing information | Optional employer preserved as null; required location absence rejects; existing fixtures cover unavailable descriptions and application method | No completeness score, repair workflow, or invented values |
+| Compensation | Separate `compensation` entries with decimal minimum/maximum, explicit currency, hour/day/week/month/year period, original quoted text, and uncertainty codes. Explicit ranges, K amounts, `from`, `up to`, point rates, multiple contextual ranges, and conflicts are tested | Empty tuple means unknown/unavailable, never zero salary. Bare `$` does not imply USD. No annualization, FX conversion, base-versus-total-pay inference, or merging geographic ranges. Unsupported number formats, mixed scales, missing currency/period, and estimates/bonus/equity language remain uncertain. Decimal amounts serialize as JSON strings |
+| Employer destination | `application_url` is separate from canonical LinkedIn `job_url`. Read only visible primary-card Apply link hrefs; retain the safe original href, visible label evidence, and status | A visible external destination is not verified employer ownership. No clicks, DNS resolution, redirects, URL unwrapping, or submissions. Buttons without href stay unknown. Multiple destinations or competing Easy Apply controls are ambiguous. Non-HTTPS, credentials, literal IPs, local-style hosts, malformed hrefs, and LinkedIn redirects are rejected. Link safety is not a browsing sandbox |
+| Washington employment eligibility | `eligible`, `excluded`, or `unknown` with exact description evidence and reason; tested explicit permission, prohibition, conflicts, incomplete descriptions, conditional language, Washington DC, and benefit-only notices | Deterministic, English patterns only; not a legal or employer eligibility determination. Remote/location filters and salary disclosure never prove eligibility. Unrecognized phrasing, implied closed state lists, conditions, or conflicting statements remain unknown and require human review |
+| Description completeness | `complete`, `incomplete`, `unavailable`, or `unknown` with reason. Stable visible uncollapsed content, retained expansion controls, clipping, empty/loading state, missing container, explicit unavailability, and failed expansion are tested | `complete` describes the rendered UI only; it cannot prove that LinkedIn contains every paragraph from the employer. A stable snippet in an unrecognized layout can require live validation; absent or drifting UI never licenses invented content |
+| Posting and freshness | Keep visible listed-time text. `posting` separates timezone-aware `posted_at`, date-only `posted_date`, and `reposted_at`; preserves repost and uncertainty evidence. Explicit ISO dates/timestamps, missing zones, conflicts, invalid timestamps, and relative-only labels are tested | Never subtract “3 hours ago” from capture time to invent a date. Reposts do not become new postings. A date without a time never becomes midnight. Unrecognized or conflicting timestamps stay unknown. Search windows request LinkedIn filtering, not independent freshness or repost guarantees |
+| Geography and identity | Synthetic WA remote eligibility/exclusion/unknown text, Seattle hybrid/onsite, Sacramento, San Diego, 24-hour and 7-day filter serialization, employer/title/location, and descriptions | No live relevance, inventory, radius/geography, or employer availability claim. Missing employer is null; required search-card identity/location failure is parser drift |
 
-The restricted inventory safeguard compares the advertised count against the full
-collected prefix before selecting a cursor page. It applies only when the provider
-would otherwise claim terminal completion. A normal result limit still yields
-continuation. A mismatch terminates as explicitly truncated, avoiding a false
-complete result or repeated futile scans. This is a conservative bound, not proof
-that all live jobs or all selected cards were found.
+Nested compensation, posting, application-label, and eligibility evidence is checked
+against captured visible text. Washington quotes must additionally belong to the
+description. Href and datetime values are explicit DOM attributes on visible controls,
+not guessed text or fetched employer content. Outer source references bind capture
+time and LinkedIn source URL. Application URLs and job descriptions are untrusted
+input; a later workflow must not treat them as instructions or automatically browse
+them.
 
-## Future integration design (not implemented)
+## Inventory, cursors, and interruption semantics
 
-Keep job discovery in this typed server. Strategy interpretation, career-evidence
-matching, ranking, schedules, and ledger handling belong in a separate future
-workflow; this repository does not gain an LLM runtime, planner, or Google client.
-The existing strategy, evidence, and ledger were not opened for this task, so exact
-role criteria, document identities, and ledger columns must be confirmed later.
+Restricted production search enables strict inventory verification. Standard-mode
+search retains its prior collection policy. Strict verification:
 
-1. **Establish inputs with explicit future authorization.** Read versioned snapshots
-   of the user's strategy and career evidence, and inspect the authoritative Google
-   Sheets ledger schema and existing records. Record source identifiers and capture
-   time. Use only supported evidence; never invent qualifications. Confirm whether
-   a sheet row represents an opportunity or an actual application before proposing
-   any row. Discovery must not imply that an application was submitted.
-2. **Create an approved query matrix outside the server.** Separate WA remote,
-   Seattle hybrid, Seattle onsite, Sacramento, and San Diego searches. Run 24-hour
-   discovery and a 7-day catch-up with deliberate overlap. Derive title and keyword
-   choices from the approved strategy rather than adding assumptions here. Respect
-   bounded calls and stop on authentication expiry, restrictions, or parser drift.
-3. **Collect and stage candidates.** Use only the five restricted tools. Follow
-   each cursor until a terminal result or explicit truncation. Record LinkedIn job
-   ID, canonical job URL, employer, title, location, workplace, visible posted-time
-   text, complete available description, source/capture time, filter parameters,
-   and coverage. Preserve nulls. Treat truncated scans as incomplete batches.
-4. **Normalize and assess without writing.** Use job ID/canonical URL for exact
-   deduplication across searches and against the ledger. Flag possible reposts or
-   same employer/title/location matches for human review rather than merging them
-   automatically. Keep WA eligibility as explicit eligible / excluded / unknown,
-   with quoted employer evidence. Store compensation only when sourced, including
-   currency, period, and uncertainty after a separately tested normalizer exists.
-   Keep LinkedIn URL distinct from an external application URL; unknown remains null.
-5. **Compare to strategy and evidence.** Produce an explainable shortlist linking
-   each fit statement to an authorized evidence item. Missing criteria and uncertain
-   eligibility remain visible. Treat all job text and links as untrusted data, never
-   as instructions to call tools, reveal evidence, or change the ledger.
-6. **Present a reviewable proposal.** Show proposed candidates, duplicates,
-   uncertainties, scan coverage, and a proposed ledger diff. The ledger remains the
-   source of truth for statuses, dates, notes, and application outcomes. Do not
-   overwrite existing user entries or mark a job applied based on discovery.
-7. **Only after separate implementation and approval, write through a dedicated
-   ledger adapter.** Re-read relevant rows and schema immediately before any write;
-   detect concurrent edits and stop on conflicts. Use a stable external-job key,
-   explicit column mapping, least-privilege ranges, an audit record, and retry rules
-   that cannot create duplicate rows. Restrict writes to approved changes and verify
-   the resulting rows. No such adapter or write permission is created here.
+1. Uses the selected header, never a neighboring body's count; samples advertised
+   counts before and after extraction and across visited pages. Counts that change,
+   disappear, or use a lower bound are explicit issues, not exact inventories.
+2. Tracks typed stable job IDs and repeated identities across pages. Same-page
+   duplicate identities, invalid/malformed cards, and an exceeded 500-card raw DOM
+   bound fail closed instead of silently discarding unclassified selected cards.
+3. Checks post-extraction identities, loading markers, and untraversed tail controls.
+   Empty results require a zero selected count and no residual selected cards; a
+   transient zero count is sampled again rather than accepted immediately.
+4. Claims `inventory_status=reconciled` only at a terminal traversal with a stable
+   exact count equal to the unique typed inventory and no observed issues. Missing
+   next-page controls alone are insufficient. Unknown counts remain uncertain.
+5. Stores bounded prior inventory counts and observed-prefix identities in cursors.
+   A changed count or lost identity between calls forces terminal truncation, even
+   if a later page appears individually complete. Cursor pages remain disjoint and
+   preserve existing account/client/filter binding, single-use, and replay rules.
+6. Marks page bounds, interrupted partial searches, and unproven reconciliation as
+   `safety_bound`, `pagination.truncated=true`, no continuation, with inventory issue
+   codes. Ordinary page-size limits retain continuation with partial coverage.
+   A stalled continuation also truncates rather than asserting completion.
+7. Propagates first-page failures, authentication/checkpoint/restriction failures,
+   and cancellation as errors. Cancellation releases reservations so an explicit
+   retry can use the prior cursor; it never manufactures a completed search.
 
-No schedules, connectors, external document changes, application submission,
-messages, or notifications to other people are implemented.
+`status=completed` means the call finished, not that the inventory is complete.
+Inspect `coverage.inventory_status`, `inventory_issues`, observed counts/IDs,
+`pagination.truncated`, and `has_more` together. Coverage counts refer to the bounded
+traversal; page result counts refer to the returned slice. Live-deduplicated scans
+are not snapshots. Equal counts do not prove membership stability outside observed
+prefixes, and deleted/reordered/reposted jobs can prevent complete coverage.
 
-## Remaining security and operational issues
+These checks implement an honest bound for the synthetic contract. Full collection
+acceptance under `COLLECTION_VERIFICATION_PROCESS.md` remains unverified without a
+separately authorized live observation; none was performed here.
 
-- Standard mode intentionally retains all upstream writes and broad reads. Enabling
-  this mode is an operator configuration decision, not a global product default.
-- Loopback HTTP remains unauthenticated and intended for trusted local processes.
-  Runtime fingerprint checks protect normal attachment, not hostile local code or
-  an operator changing/replacing the process. Do not port-forward or multi-tenant it.
-- Explicit URL validation is not a browser-wide egress firewall. Redirects,
-  subresources, and clicks can issue off-host requests before final-URL checks.
-  No production request-interception firewall is added.
-- Browser profiles remain credentials. No profile was authenticated here. Local
-  evidence-resource account isolation in standard mode and attachment file races
-  from the initial audit remain upstream concerns; the restricted mode excludes
-  those resource/upload entry points.
-- Reading pages may still be observable by LinkedIn. Read-only means no exposed
-  account-changing actions; it is not a promise of invisible browsing or zero
-  platform analytics. Text can be stale, incomplete, or malicious.
-- No new dependency advisory scan, live penetration test, live selector acceptance,
-  or platform-policy acceptance was performed. Full collection acceptance under
-  `COLLECTION_VERIFICATION_PROCESS.md` remains incomplete without authorized live
-  evidence; synthetic success is not live readiness.
+## Future workflow and authoritative application ledger
 
-## Recommended next stage
+No Google documents, career evidence, strategy, or ledger were opened or modified.
+The separate future workflow would:
 
-First review this branch and complete a second offline stage: typed external
-application URL and compensation extraction with provenance, explicit missing-JD
-and eligibility representation, and stronger terminal-inventory reconciliation.
-Extend synthetic official-MCP workflows with those cases and ledger-shaped staging
-fixtures while making no external writes. Keep the restricted allowlist unchanged.
+1. Read explicitly authorized, versioned strategy/evidence snapshots and confirm
+   the authoritative Sheets schema. Determine whether a row represents discovery
+   or an actual application; discovery must never mean “applied.”
+2. Use an approved query matrix for the five geography/workplace buckets, a 24-hour
+   run and overlapping 7-day catch-up. Follow bounded cursors and preserve coverage.
+3. Stage normalized candidates outside the MCP, deduplicate by job ID/canonical URL
+   against search overlap and the ledger, and flag possible reposts or cross-source
+   duplicates for review. Preserve unknown eligibility, pay, dates, and destinations.
+4. Explain strategy fit using only cited career evidence. Show incomplete scans,
+   conditional state eligibility, conflicting pay, and uncertain descriptions.
+5. Present a proposed shortlist and ledger diff. Re-read authoritative rows before
+   any separately approved write, detect concurrent edits, use stable keys and exact
+   column mappings, and verify the result. Never overwrite existing user statuses,
+   dates, or notes, and never record an application based solely on job discovery.
 
-Only after a separate explicit authorization should a short-lived, supervised,
-low-volume, read-only LinkedIn acceptance run use a private profile and an egress
-policy that has been reviewed for that stage. Verify the five-tool inventory and
-negative direct calls before browser access, test each geographic/time bucket,
-reconcile every cursor scan or record truncation, stop on checkpoints, and retain
-only aggregate private validation evidence. Do not enable account-changing tools
-or a persistent service. Ledger integration needs its own later approval.
+Planning, ranking, scheduling, evidence retrieval, ATS ingestion, and a ledger
+adapter remain outside this standalone typed server. No connector, scheduler,
+notification, monitor, or ledger-writing permission is created by this PR.
+
+## Remaining technical and account-security risks
+
+- The generic shared loopback HTTP runtime has no per-client authentication. Trusted
+  local processes share a security boundary; fingerprint checks are not protection
+  against hostile local code. Do not expose, proxy, port-forward, or multi-tenant it.
+  Dedicated stdio reduces listener exposure but does not sandbox the local user.
+- Production URL validation is not a browser-wide egress firewall. Redirects,
+  subresources, or visible controls can initiate traffic before final-URL checks.
+  Extracted destination validation is separate and must not be used to auto-follow
+  links. Preserve an independently reviewed network policy for live work.
+- Persistent profiles and backup/failed siblings remain credentials. No profile was
+  authenticated here. Standard mode retains upstream writes, account-scoped evidence
+  resources, and attachment filesystem-race concerns from the initial audit.
+- Visible reads can be observable to LinkedIn. Session expiry, checkpoint/restriction,
+  selectors, layouts, count semantics, posting labels, and account/platform policies
+  remain unvalidated in live use. No CAPTCHA/anti-bot bypass or private endpoints.
+- Compensation, employment eligibility, and completeness are conservative evidence
+  classifications, not guarantees. Unsupported languages, conditional logic, locale
+  formats, inaccessible destinations, employer ownership, true original posting
+  dates, and cross-source/repost matching still require review or development.
+- No new dependency advisory scan or live penetration test was performed. Offline
+  passing tests do not establish account safety, policy compliance, or live readiness.
+
+## Proposed limited supervised acceptance (requires separate authorization)
+
+Do not run this plan yet. Before authorizing it, review PR #1 and the aggregate
+security limitations, confirm an approved method of LinkedIn access, and inspect
+an isolated local environment with a private profile and reviewed browser egress
+policy. The current development environment does not permit LinkedIn destinations;
+this work does not change that policy or request credentials.
+
+For a future one-off session:
+
+1. The operator prepares the private profile directly; never put credentials or
+   cookies in chat, source, logs, or a shared environment snapshot. Keep automatic
+   login off. Use the dedicated stdio launcher, no persistent/shared public service.
+2. Validate the five-tool list and repeat excluded direct-call checks before any
+   browser reads. Confirm the explicit mode is required and no startup fallback.
+3. Time-box to 30 minutes: one 24-hour search per geography/workplace bucket plus
+   one approved 7-day catch-up, at most two cursor pages of five jobs per query
+   (at most 60 returned cards), and at most ten job-detail reads. Preserve existing
+   pacing; make no automatic retries or continuous schedule.
+4. The supervisor compares a small sample to visible UI: exact pay/evidence,
+   destination href without following it, state statement, rendered full description,
+   original versus reposted time, selected counts, duplicates, and terminal metadata.
+   A first page is not inventory acceptance; unresolved counts must stay truncated.
+5. Stop immediately on checkpoint, restriction, expired authentication, permission
+   failures, parser drift, unexpected navigation, unreviewed egress, or uncertain
+   action effects. Do not widen access or add bypasses to finish the sample.
+6. Retain only aggregate, private validation metrics: calls, buckets, extraction
+   accuracy, unknown/truncated counts, pause state, and time spent. No DOM, screenshots,
+   personal profiles, cookies, raw descriptions, or authentication material in Git.
+   Close the process at the deadline; no ledger writes or application actions.
+
+Success requires correct evidence on every reviewed returned field, no guessed
+eligibility/dates, honest truncation on every unreconciled scan, and zero excluded
+actions. Any failure returns the feature to offline development. This plan itself
+is not authorization to authenticate or execute live calls.
+
+## Investment decision: LinkedIn MCP versus employer ATS feeds
+
+**Recommend employer ATS feeds/public job APIs as the primary acquisition path,
+with LinkedIn MCP as a bounded optional discovery supplement.** This PR justifies
+one supervised acceptance decision, not continuous LinkedIn investment or rollout.
+
+Where employers offer public feeds/APIs (for example Greenhouse or Lever job-board
+interfaces), they commonly provide direct application URLs and employer-source
+job descriptions without a LinkedIn account. Structured IDs and fields usually cost
+less to maintain than UI selectors. Availability, salary detail, original publication
+times, and employer coverage still vary; feeds must be individually validated and
+repost matching is not solved merely by using an API. No ATS connection is added.
+
+LinkedIn may add discovery across employers not already in a target-company list,
+but brings session/account risk, UI drift, incomplete inventories, indirect apply
+buttons, relative/reposted dates, and recurring manual acceptance costs. Measure
+incremental qualified opportunities against an independently approved ATS sample,
+unknown-field frequency, truncation, and operator maintenance time. Continue only
+if the supervised sample demonstrates useful incremental coverage with correct
+critical fields and acceptable account behavior. Prioritize ATS coverage and stop
+expanding LinkedIn if checkpoints, repeated drift, or unknown critical fields erase
+that benefit. Keep all application tracking in the existing authoritative ledger.
 
 ## Verification record
 
 Validated on Python 3.12.14 / Linux, 2026-10-15:
 
-- Complete offline suite: **543 passed**, no failures or skips, in 137.53 seconds.
-  This includes 28 new focused checks over the 515-test baseline.
-- Branch coverage: **85.12%**, satisfying the unchanged 85% threshold
-  (baseline: 85.06%).
-- Ruff format: 118 files formatted; lint passed.
-- Strict Pyright: zero errors or warnings.
-- `uv lock --offline --check`, `git diff --check`, and offline sdist/wheel builds
-  passed. No dependency or lockfile changes were needed.
-- Full successful output: `/tmp/linkedin-job-discovery-offline.log` in the task
-  workspace. No remote CI or non-Linux validation is claimed by these results.
+- **640 passed, 0 failed, 0 skipped**, in **159.94 seconds**. This is 97 more tests
+  than the prior PR head's 543-test suite.
+- **85.52% total coverage with branch measurement enabled**, above the unchanged
+  85% gate (prior head: 85.12%). This is coverage.py's combined reported metric,
+  not a claim that every branch or live UI state is covered.
+- Ruff format: **122 files** already formatted. Ruff lint passed. Strict Pyright:
+  **0 errors, 0 warnings**.
+- Offline lockfile validation, diff whitespace checks, and source/wheel builds
+  passed. No dependency or lockfile change was needed.
+- An intermediate full run found only a packaging contract expecting one console
+  script; the expectation now includes the dedicated discovery script. The final
+  complete run above passed after that correction and the last bounded-DOM tests.
+- Successful full output: `/tmp/linkedin-v2-full-offline.log` in the task workspace.
+  GitHub Actions status for the published head is recorded in the PR description
+  and completion report after querying GitHub; local success is not remote CI success.
 
-The managed environment stores installed Chromium in the workspace cache.
-Some upstream bootstrap tests deliberately remove the Playwright override, so
-set the native XDG cache too when reproducing the complete suite here:
+Reproduce the complete offline suite in this managed environment using the installed
+native browser cache (upstream bootstrap tests deliberately clear overrides):
 
 ```bash
 XDG_CACHE_HOME=/workspace/.cache \
@@ -172,7 +239,5 @@ LINKEDIN_MCP_AUTO_LOGIN_ON_START=false \
 uv run --offline pytest --cov=linkedin_mcp --cov-branch --cov-report=term-missing
 ```
 
-Tests remain network-isolated and use only synthetic browser/provider fixtures.
-No LinkedIn authentication, live traffic, credentials, external integrations,
-strategy/evidence-document or ledger changes, persistent deployment, or merge
-occurred.
+No non-Linux run, authenticated acceptance, deployment, external integration,
+continuous monitoring, Google Drive/ledger modification, or merge is claimed.

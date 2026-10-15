@@ -472,3 +472,18 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def discovery_main() -> None:
+    """Run a supervised, process-bound stdio server; never start a background runtime."""
+    from linkedin_mcp.config import JobDiscoverySettings
+    from linkedin_mcp.container import create_production_container
+    from linkedin_mcp.server import create_mcp_server
+
+    try:
+        settings = JobDiscoverySettings()
+        configure_logging(settings.log_level)
+        create_mcp_server(create_production_container(settings)).run(transport="stdio")
+    except (ValidationError, LinkedInMCPError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(2) from error

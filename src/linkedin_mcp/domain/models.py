@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Literal
 
@@ -2063,6 +2064,46 @@ class JobHiringTeamMember(StrictModel):
     visible_text: Annotated[str, Field(min_length=1)]
 
 
+class JobCompensation(StrictModel):
+    minimum: Annotated[Decimal, Field(ge=0)] | None = None
+    maximum: Annotated[Decimal, Field(ge=0)] | None = None
+    currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")] | None = None
+    pay_period: Literal["hour", "day", "week", "month", "year"] | None = None
+    raw_text: str
+    uncertainties: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_range(self) -> JobCompensation:
+        if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
+            raise ValueError("Compensation minimum cannot exceed maximum")
+        return self
+
+
+class WashingtonEligibility(StrictModel):
+    status: Literal["eligible", "excluded", "unknown"] = "unknown"
+    reason: str = "No explicit Washington employment statement."
+    evidence: tuple[EvidenceField, ...] = ()
+
+
+class JobTimestampAttribute(StrictModel):
+    visible_label: str
+    raw_datetime: str
+    attribute: Literal["datetime"] = "datetime"
+
+
+class JobPosting(StrictModel):
+    timestamp_attributes: tuple[JobTimestampAttribute, ...] = ()
+    posted_at: datetime | None = None
+    posted_date: date | None = None
+    reposted_at: datetime | None = None
+    is_repost: bool | None = None
+    freshness: Literal["explicit_timestamp", "explicit_date", "relative_only", "unknown"] = (
+        "unknown"
+    )
+    uncertainties: tuple[str, ...] = ()
+    evidence: tuple[EvidenceField, ...] = ()
+
+
 class JobSummary(StrictModel):
     job_id: JobId
     job_url: HttpUrl
@@ -2072,6 +2113,8 @@ class JobSummary(StrictModel):
     location: Annotated[str, Field(min_length=1, max_length=500)] | None = None
     workplace_type: JobWorkplaceType | None = None
     listed_at_text: Annotated[str, Field(min_length=1, max_length=300)] | None = None
+    posting: JobPosting = Field(default_factory=JobPosting)
+    compensation: tuple[JobCompensation, ...] = ()
     easy_apply: bool = False
     verified: bool = False
     promoted: bool = False
@@ -2091,6 +2134,11 @@ class JobSearchCoverage(StrictModel):
     stop_reason: StopReason
     advertised_result_count: Annotated[int, Field(ge=0)] | None = None
     advertised_result_count_is_lower_bound: bool = False
+    inventory_status: Literal["reconciled", "partial", "uncertain", "interrupted"] = "uncertain"
+    inventory_issues: tuple[str, ...] = ()
+    observed_result_counts: tuple[int | None, ...] = ()
+    observed_job_ids: tuple[str, ...] = ()
+    duplicate_count: Annotated[int, Field(ge=0)] = 0
     captured_at: datetime
 
 
@@ -2115,8 +2163,21 @@ class JobDetailObservation(StrictModel):
     workplace_type: JobWorkplaceType | None = None
     employment_type: Annotated[str, Field(min_length=1, max_length=300)] | None = None
     listed_at_text: Annotated[str, Field(min_length=1, max_length=300)] | None = None
+    posting: JobPosting = Field(default_factory=JobPosting)
+    compensation: tuple[JobCompensation, ...] = ()
     applicant_text: Annotated[str, Field(min_length=1, max_length=300)] | None = None
     description_text: Annotated[str, Field(min_length=1)] | None = None
+    description_completeness: Literal["complete", "incomplete", "unavailable", "unknown"] = (
+        "unknown"
+    )
+    description_completeness_reason: str = "Rendered description has not been assessed."
+    washington_eligibility: WashingtonEligibility = Field(default_factory=WashingtonEligibility)
+    application_url: HttpUrl | None = None
+    application_url_status: Literal["visible_external", "unknown", "ambiguous", "rejected"] = (
+        "unknown"
+    )
+    application_url_source_href: str | None = None
+    application_url_evidence: tuple[EvidenceField, ...] = ()
     apply_method: JobApplyMethod = JobApplyMethod.UNAVAILABLE
     easy_apply: bool | None = None
     promoted: bool = False
