@@ -1,28 +1,60 @@
 # Configuration
 
 LinkedIn MCP Server is configured with environment variables using the
-`LINKEDIN_MCP_` prefix. The package registers every currently implemented
+`LINKEDIN_MCP_` prefix. Standard mode registers every currently implemented
 typed capability. Actions that change LinkedIn are single-call tools; the MCP
-client decides which tools are exposed and whether a destructive call requires
-confirmation.
+client decides whether an available destructive call requires confirmation.
+The optional job-search-only mode enforces a fixed server-side allowlist.
 
 For `uvx` installations, put environment variables in the MCP client's server
 entry. A source checkout can also use an uncommitted `.env` file based on
 [`.env.example`](../.env.example).
 
+## Dedicated job-discovery startup
+
+Use `linkedin-job-discovery` for future supervised discovery. It requires an
+explicit `LINKEDIN_MCP_ACCESS_MODE=job-search-only`, rejects a missing/invalid or
+standard setting, forces automatic login off, and supports only process-bound
+stdio. It never elects a shared/background runtime or listens on HTTP. The sample
+[`mcp-client.example.json`](../packaging/job-discovery/mcp-client.example.json) is
+not activated by this repository. This setting does not authorize live access.
+
+Generic `linkedin-mcp serve` preserves its standard default and must not replace
+this discovery launcher. See [validation and acceptance plan](JOB_DISCOVERY.md).
+
 ## Tool availability
 
-The server does not maintain capability scopes, effect allowlists, or per-tool
-authorization records. `linkedin.capabilities.list` reports the complete
-installed capability set and its read/write effect plus required visible UI
-surfaces. Those surfaces document implementation boundaries; they are not
-operator permissions.
+Set `LINKEDIN_MCP_ACCESS_MODE=job-search-only` to expose exactly:
 
-Enable, disable, or restrict tools in the MCP client. If a client makes a tool
-available and invokes it, the server treats that invocation as authorized for
-the configured LinkedIn account. The server still validates typed input,
-canonical targets, LinkedIn authentication, exact visible preconditions,
-attachment path/type/size validation, bounded execution, and visible postconditions.
+- `linkedin.jobs.search`
+- `linkedin.jobs.get`
+- `linkedin.server.status`
+- `linkedin.session.status`
+- `linkedin.capabilities.list`
+
+The default is `standard`; every other value (including empty strings and Boolean
+spellings) rejects startup. Restricted mode forces `auto_login_on_start=false`,
+even when automatic login is requested elsewhere in configuration. No login is
+started automatically. A future authorized live operator must separately prepare
+a private profile; this setting does not authorize live access.
+
+The server removes other MCP tool registrations, denies excluded worker and
+executor calls before queueing, replay, persistence, or browser access, filters
+the capability inventory to the two job operations, and omits the captured-source
+resource. Job results still include inline typed data and source references;
+resource dereferencing is unavailable in this mode. Unknown/future tools are
+excluded by default. `server.status.access_mode` reports the effective mode.
+
+The mode is fixed when the runtime is constructed and contributes to the shared
+runtime configuration fingerprint. A differently configured client cannot silently
+attach to an already running standard runtime. Stop and restart the runtime to
+change modes; do not reuse a broad runtime for restricted discovery.
+
+Standard mode retains all upstream capabilities and evidence-resource behavior.
+Client approvals remain relevant for writes in standard mode. No per-call approval
+ledger, scope database, or external integration is added. The mode restricts the
+MCP server; it does not sandbox a local operator's Python code or CLI maintenance
+commands. See [job discovery validation and integration plan](JOB_DISCOVERY.md).
 
 ## Client tool policy
 

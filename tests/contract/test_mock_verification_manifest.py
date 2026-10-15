@@ -189,6 +189,7 @@ EXPECTED_POST_CREATE_MODES = frozenset(
 )
 EXPECTED_ERROR_CODES = frozenset(
     {
+        "access_denied",
         "configuration_error",
         "access_paused",
         "authentication_required",

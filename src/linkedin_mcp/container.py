@@ -35,6 +35,7 @@ from linkedin_mcp.browser.pages import (
 from linkedin_mcp.capabilities import CapabilityRegistry, create_default_registry
 from linkedin_mcp.config import Settings, runtime_configuration_fingerprint
 from linkedin_mcp.persistence import MemoryRepository, Repository
+from linkedin_mcp.policy.access import AccessPolicy
 
 
 @dataclass(slots=True)
@@ -90,7 +91,10 @@ class AppContainer:
 
 def create_production_container(settings: Settings) -> AppContainer:
     repository = MemoryRepository()
-    registry = create_default_registry()
+    policy = AccessPolicy(settings.access_mode)
+    registry = CapabilityRegistry(
+        tuple(d for d in create_default_registry().list() if policy.allows(d.name.value))
+    )
     browser = BrowserManager(settings)
     connections_list = ConnectionsListPage(
         browser,
@@ -117,6 +121,7 @@ def create_production_container(settings: Settings) -> AppContainer:
         job_search=JobSearchPage(
             browser,
             max_pages=settings.job_search_max_pages_per_call,
+            verify_inventory=settings.access_mode == "job-search-only",
         ),
         job_detail=JobDetailPage(browser),
         people_search=PeopleSearchPage(
@@ -167,6 +172,7 @@ def create_production_container(settings: Settings) -> AppContainer:
         pagination=pagination,
         account_id=settings.account_id,
         call_lookup=repository.find_call,
+        access_mode=settings.access_mode,
     )
     return AppContainer(
         settings=settings,

@@ -11,6 +11,8 @@ from platformdirs import user_cache_path, user_data_path
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from linkedin_mcp.policy.access import AccessMode
+
 
 def default_data_path() -> Path:
     """Return the persistent per-user root for local LinkedIn MCP state."""
@@ -43,6 +45,7 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    access_mode: AccessMode = "standard"
     account_id: str = Field(default="personal", min_length=1, max_length=200)
     browser_profile_path: Path = Field(default_factory=_default_browser_profile_path)
     browser_cache_path: Path = Field(default_factory=_default_browser_cache_path)
@@ -89,6 +92,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> Settings:
+        if self.access_mode == "job-search-only":
+            self.auto_login_on_start = False
         if self.transport == "streamable-http" and self.http_host not in {
             "127.0.0.1",
             "::1",
@@ -108,3 +113,15 @@ def runtime_configuration_fingerprint(settings: Settings) -> str:
     values.pop("runtime_start_timeout_seconds", None)
     canonical = json.dumps(values, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+class JobDiscoverySettings(Settings):
+    """Dedicated discovery startup requires an explicit restricted value."""
+
+    @model_validator(mode="after")
+    def require_restriction(self) -> JobDiscoverySettings:
+        if "access_mode" not in self.model_fields_set or self.access_mode != "job-search-only":
+            raise ValueError("Job discovery requires explicit access_mode=job-search-only")
+        if self.transport != "stdio":
+            raise ValueError("The dedicated discovery launcher supports only stdio")
+        return self

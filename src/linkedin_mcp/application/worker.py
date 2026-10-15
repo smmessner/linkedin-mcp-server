@@ -61,6 +61,7 @@ from linkedin_mcp.errors import (
     IdempotencyConflictError,
 )
 from linkedin_mcp.persistence.contracts import CallStart
+from linkedin_mcp.policy.access import AccessMode, AccessPolicy
 
 CapabilityRequest = (
     JobSearchInput
@@ -232,7 +233,9 @@ class CapabilityWorker:
         pagination: PaginationManager | None = None,
         account_id: str = "personal",
         call_lookup: CallLookup | None = None,
+        access_mode: AccessMode = "standard",
     ) -> None:
+        self._policy = AccessPolicy(access_mode)
         self._runner = runner
         self._scheduler: FairClientScheduler[str, _WorkItem] = FairClientScheduler(
             capacity=queue_capacity
@@ -443,6 +446,7 @@ class CapabilityWorker:
         *,
         progress: ProgressReporter | None = None,
     ) -> CapabilityOutput:
+        self._policy.require(capability_name.value)
         if not self._accepting or not self.running:
             raise BrowserUnavailableError("The local LinkedIn worker is not running.")
 

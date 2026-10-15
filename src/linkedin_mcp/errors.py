@@ -6,6 +6,7 @@ from enum import StrEnum
 
 
 class ErrorCode(StrEnum):
+    ACCESS_DENIED = "access_denied"
     CONFIGURATION_ERROR = "configuration_error"
     ACCESS_PAUSED = "access_paused"
     AUTHENTICATION_REQUIRED = "authentication_required"
@@ -34,6 +35,11 @@ class LinkedInMCPError(Exception):
         self.safe_message = message
         self.retryable = retryable
         self.pause_required = pause_required
+
+
+class AccessDeniedError(LinkedInMCPError):
+    def __init__(self, message: str) -> None:
+        super().__init__(ErrorCode.ACCESS_DENIED, message)
 
 
 class ConfigurationError(LinkedInMCPError):

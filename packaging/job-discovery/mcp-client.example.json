@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "linkedin-job-discovery": {
+      "command": "linkedin-job-discovery",
+      "env": {
+        "LINKEDIN_MCP_ACCESS_MODE": "job-search-only",
+        "LINKEDIN_MCP_AUTO_LOGIN_ON_START": "false",
+        "LINKEDIN_MCP_BROWSER_AUTO_INSTALL": "false",
+        "LINKEDIN_MCP_JOB_SEARCH_MAX_PAGES_PER_CALL": "2"
+      }
+    }
+  }
+}

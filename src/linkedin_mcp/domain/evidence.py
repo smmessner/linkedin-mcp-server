@@ -62,6 +62,21 @@ def stable_source_id(
     return f"{source_type.value}:{digest}"
 
 
+def _validate_job_metadata(job: JobSummary | JobDetailObservation) -> None:
+    quotes = [offer.raw_text for offer in job.compensation]
+    quotes.extend(e.quote for e in job.posting.evidence)
+    quotes.extend(a.visible_label for a in job.posting.timestamp_attributes)
+    if isinstance(job, JobDetailObservation):
+        quotes.extend(e.quote for e in job.application_url_evidence)
+        quotes.extend(e.quote for e in job.washington_eligibility.evidence)
+        if any(
+            e.quote not in (job.description_text or "") for e in job.washington_eligibility.evidence
+        ):
+            raise ParserDriftError("Washington eligibility evidence is not from the description.")
+    if any(quote not in job.visible_text for quote in quotes):
+        raise ParserDriftError("Job metadata evidence is not bound to captured visible text.")
+
+
 def source_from_job_search(
     *,
     source_url: str,
@@ -70,6 +85,7 @@ def source_from_job_search(
     coverage: JobSearchCoverage,
 ) -> CapturedSource:
     for job in jobs:
+        _validate_job_metadata(job)
         for evidence in job.evidence:
             if evidence.quote not in job.visible_text or evidence.quote not in captured_text:
                 raise ParserDriftError(
@@ -96,6 +112,7 @@ def source_from_job_search(
 
 
 def source_from_job_detail(observation: JobDetailObservation) -> CapturedSource:
+    _validate_job_metadata(observation)
     for evidence in observation.evidence:
         if evidence.quote not in observation.visible_text:
             raise ParserDriftError(

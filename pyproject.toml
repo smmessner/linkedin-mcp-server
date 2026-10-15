@@ -42,6 +42,7 @@ Changelog = "https://github.com/prakharagarwal-dev/linkedin-mcp-server/blob/main
 
 [project.scripts]
 linkedin-mcp = "linkedin_mcp.__main__:main"
+linkedin-job-discovery = "linkedin_mcp.__main__:discovery_main"
 
 [dependency-groups]
 dev = [

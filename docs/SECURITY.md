@@ -12,14 +12,38 @@ Trust is split between:
   clients;
 - the MCP client, which controls tool availability and approval for each
   account-changing call;
-- the server, which validates typed inputs, exact visible targets, attachment
+- the server, which enforces the optional fixed job-search-only allowlist and
+  validates typed inputs, exact visible targets, attachment
   boundaries, and action postconditions;
 - LinkedIn's visible web UI, which supplies identity, current state, data, and
   postconditions.
 
-The server has no database, application-secret service, scope allowlist, or
+The server has no database, application-secret service, dynamic capability scopes, or
 server-side approval ledger. Read-call replay, cursors, and evidence live only
 in process memory.
+
+## Restricted job discovery
+
+The dedicated `linkedin-job-discovery` launcher requires explicit restricted
+configuration and exits before container creation if it is missing or standard.
+It uses only process-bound stdio, with no shared/background runtime or listener.
+The generic upstream launcher retains its standard default; future discovery
+configuration must use the dedicated launcher. No launch configuration is
+activated by this PR.
+
+`LINKEDIN_MCP_ACCESS_MODE=job-search-only` is enforced by the server, independent
+of client approvals. Only job search, job detail, and the three local inspection
+tools are registered. The worker and executor independently deny every excluded
+capability before side effects; the evidence resource is unavailable. Invalid
+mode values fail startup. Automatic login is disabled. Policy is a runtime
+snapshot, and runtime attachment checks include the mode in the fingerprint.
+See [configuration](CONFIGURATION.md) and [validation limits](JOB_DISCOVERY.md).
+
+This is a tool execution boundary, not network isolation or multi-tenant
+authentication. Browser URL checks are not an egress firewall; loopback processes
+still share a trust boundary. Job text and source URLs are untrusted external
+data. Treat the profile as credentials, and do not forward or expose the runtime.
+Normal mode still exposes upstream account-changing tools.
 
 ## Authentication profile
 

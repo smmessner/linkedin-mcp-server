@@ -80,6 +80,7 @@ from linkedin_mcp.domain.models import (
     ServerStatusOutput,
     SessionStatusOutput,
 )
+from linkedin_mcp.policy.access import AccessPolicy
 
 IdentifierArgument = Annotated[
     str,
@@ -119,6 +120,8 @@ def create_mcp_server(
     *,
     manage_container_lifecycle: bool = True,
 ) -> FastMCP[None]:
+    policy = AccessPolicy(container.settings.access_mode)
+
     @asynccontextmanager
     async def lifespan(_: FastMCP[None]) -> AsyncGenerator[None]:
         if manage_container_lifecycle:
@@ -132,11 +135,17 @@ def create_mcp_server(
     mcp: FastMCP[None] = FastMCP(
         "linkedin-mcp-server",
         instructions=(
-            "Each account-changing tool performs one complete LinkedIn action. Every invocation "
-            "is new, so do not retry an uncertain action blindly. Use only registered typed "
-            "LinkedIn capabilities. Cursors belong to the MCP session that created them. "
-            "Operation state exists only for this server process; evidence is at "
-            "linkedin://sources/{source_id}."
+            "Job-search-only mode: only job discovery and local status tools are available. "
+            "No account-changing or unrelated data-access tools are available."
+            if policy.mode == "job-search-only"
+            else (
+                "Each account-changing tool performs one complete LinkedIn action. "
+                "Every invocation "
+                "is new, so do not retry an uncertain action blindly. Use only registered typed "
+                "LinkedIn capabilities. Cursors belong to the MCP session that created them. "
+                "Operation state exists only for this server process; evidence is at "
+                "linkedin://sources/{source_id}."
+            )
         ),
         json_response=True,
         stateless_http=False,
@@ -182,6 +191,7 @@ def create_mcp_server(
     async def _server_status() -> ServerStatusOutput:
         return ServerStatusOutput(
             version=__version__,
+            access_mode=policy.mode,
             transport=container.settings.transport,
             connected_clients=container.clients.connected_count,
             queue_depth=container.worker.queue_depth,
@@ -199,7 +209,11 @@ def create_mcp_server(
     )
     async def _list_capabilities() -> CapabilityListOutput:
         return CapabilityListOutput(
-            capabilities=tuple(descriptor.info() for descriptor in container.registry.list())
+            capabilities=tuple(
+                descriptor.info()
+                for descriptor in container.registry.list()
+                if policy.allows(descriptor.name.value)
+            )
         )
 
     @mcp.tool(
@@ -1143,23 +1157,25 @@ def create_mcp_server(
         await ctx.report_progress(100, 100, "Message action reached a terminal outcome")
         return result
 
-    @mcp.resource(
-        "linkedin://sources/{source_id}",
-        name="LinkedIn Captured Source",
-        description="Read immutable captured LinkedIn evidence from this server process.",
-        mime_type="application/json",
-    )
-    async def _captured_source(source_id: str) -> str:
-        try:
-            source = await container.repository.get_source(
-                account_id=container.settings.account_id,
-                source_id=source_id,
-            )
-        except Exception as error:
-            raise ResourceError("The captured source could not be loaded.") from error
-        if source is None:
-            raise ResourceError("The captured source does not exist for this account.")
-        return source.model_dump_json(indent=2)
+    if policy.mode == "standard":
+
+        @mcp.resource(
+            "linkedin://sources/{source_id}",
+            name="LinkedIn Captured Source",
+            description="Read immutable captured LinkedIn evidence from this server process.",
+            mime_type="application/json",
+        )
+        async def _captured_source(source_id: str) -> str:  # pyright: ignore[reportUnusedFunction]
+            try:
+                source = await container.repository.get_source(
+                    account_id=container.settings.account_id,
+                    source_id=source_id,
+                )
+            except Exception as error:
+                raise ResourceError("The captured source could not be loaded.") from error
+            if source is None:
+                raise ResourceError("The captured source does not exist for this account.")
+            return source.model_dump_json(indent=2)
 
     registered_handlers = (
         _server_status,
@@ -1186,9 +1202,12 @@ def create_mcp_server(
         _search_messages,
         _get_conversation,
         _send_message,
-        _captured_source,
     )
     del registered_handlers
+    # Removing registration also rejects direct tools/call requests before argument parsing.
+    for tool in mcp._tool_manager.list_tools():  # pyright: ignore[reportPrivateUsage]
+        if not policy.allows(tool.name):
+            mcp.remove_tool(tool.name)
     _install_client_context_binding(mcp, container)
     return mcp
 
