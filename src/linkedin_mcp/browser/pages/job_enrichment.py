@@ -93,6 +93,13 @@ async def description_state(
     if busy:
         return text, "unknown", "Description is still loading."
     await box.page.wait_for_timeout(75)
+    if not await box.is_visible():
+        return text, "unknown", "Description disappeared during the bounded stability check."
+    if (
+        await box.get_attribute("aria-busy") == "true"
+        or await box.locator('[aria-busy="true"], [role="progressbar"]').count()
+    ):
+        return text, "unknown", "Description started loading during the bounded stability check."
     if (await box.inner_text()).strip() != text:
         return text, "unknown", "Description changed during the bounded stability check."
     return (

@@ -64,6 +64,9 @@ def compensation_from_text(text: str) -> tuple[JobCompensation, ...]:
                 high = low  # A single explicit rate is a point, not an invented range.
             minimum, maximum = (None, low) if qualifier == "up to" else (low, high)
             issues: list[str] = []
+            if re.match(r"\s*(?:million|billion|m\b|b\b)", line[match.end() :], re.I):
+                minimum = maximum = None
+                issues.append("unsupported_scale")
             if currency is None:
                 issues.append("currency_missing_or_ambiguous")
             if period is None:
@@ -138,7 +141,7 @@ def washington_from_description(text: str | None, *, complete: bool) -> Washingt
             continue
         if re.search(
             r"\b(?:may|might|subject to|unless|except|if|provided|conditional|"
-            r"but|excluding|not excluded|not ineligible)\b",
+            r"but|excluding|not excluded|not ineligible|no longer|only|not all)\b",
             sentence,
             re.I,
         ):
@@ -152,6 +155,8 @@ def washington_from_description(text: str | None, *, complete: bool) -> Washingt
             re.I,
         ):
             negative.append(sentence)
+        elif re.search(r"\b(?:not|never|cannot|ineligible|excluded|unavailable)\b", sentence, re.I):
+            ambiguous.append(sentence)
         elif re.search(
             r"(?:employment|hiring)\s+(?:is\s+)?(?:available|permitted|open)"
             r".*\b(?:Washington|WA)\b|(?:Washington(?: state)?|WA)\s+residents?"
@@ -224,7 +229,10 @@ def posting_from_visible(text: str | None, times: tuple[tuple[str, str], ...] = 
     explicit_dates = tuple(
         (m.group(), m.group("value"))
         for m in re.finditer(
-            r"\b(?:Posted|Published)(?: on)?\s+(?P<value>\d{4}-\d{2}-\d{2})(?![T\d])", visible, re.I
+            r"\b(?:Originally\s+)?(?:Posted|Published)(?: on)?\s+"
+            r"(?P<value>\d{4}-\d{2}-\d{2})(?![T\d])",
+            visible,
+            re.I,
         )
     )
     for label, value in (*times, *explicit_dates):
@@ -234,7 +242,9 @@ def posting_from_visible(text: str | None, times: tuple[tuple[str, str], ...] = 
         attributes.append(JobTimestampAttribute(visible_label=label, raw_datetime=value))
         try:
             if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-                if not repost and not re.search(r"reposted", label, re.I):
+                if not re.search(r"reposted", label, re.I) and (
+                    not repost or re.match(r"originally\s+(?:posted|published)\b", label, re.I)
+                ):
                     dates.add(date.fromisoformat(value))
                 else:
                     issues.append("repost_date_is_not_original_posting_date")
@@ -263,14 +273,14 @@ def posting_from_visible(text: str | None, times: tuple[tuple[str, str], ...] = 
         posted.clear()
         reposted.clear()
         dates.clear()
-    if repost:
+    if repost or reposted:
         issues.append("repost_is_not_new_job")
     return JobPosting(
         timestamp_attributes=tuple(attributes),
         posted_at=next(iter(posted), None),
         posted_date=next(iter(dates), None),
         reposted_at=next(iter(reposted), None),
-        is_repost=True if repost else None,
+        is_repost=True if repost or reposted else None,
         freshness="explicit_timestamp"
         if posted or reposted
         else "explicit_date"

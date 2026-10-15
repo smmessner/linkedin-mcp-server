@@ -26,6 +26,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Keep negated/subset Washington eligibility and unsupported million/billion pay
+  scales unknown; retain explicitly original date-only postings alongside reposts.
+  Reject competing selected counts and missing card identities, retain sampled
+  lower bounds, and refuse empty-inventory or description completeness while
+  loading or untraversed controls remain.
+
 - Support native Windows runtime ownership, CIM-brokered startup that survives
   client-owned Job Objects, console handling, and graceful instance-bound
   shutdown alongside POSIX platforms. Run the full

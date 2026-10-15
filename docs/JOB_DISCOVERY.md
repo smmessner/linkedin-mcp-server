@@ -61,6 +61,27 @@ time and LinkedIn source URL. Application URLs and job descriptions are untruste
 input; a later workflow must not treat them as instructions or automatically browse
 them.
 
+## Follow-up hardening on the existing draft
+
+The follow-up adds 19 synthetic regressions to the prior 640-test suite:
+
+- Negated and subset Washington statements (including “no longer eligible” and
+  “not all”) remain unknown with description evidence, rather than matching a
+  positive substring. Unsupported million/billion pay scales preserve unknown
+  bounds with `unsupported_scale`; they do not become one-dollar point rates.
+- Explicit “Originally posted/published on YYYY-MM-DD” dates survive a distinct
+  repost label without becoming midnight timestamps. A visible repost timestamp
+  attribute also marks the result as a repost when the aggregate label is absent.
+- Empty selected inventories retain lower-bound flags from every count sample;
+  loaders and untraversed tail controls prevent reconciliation even at zero.
+  Competing selected-header counts stay unknown, and an empty card identity raises
+  parser drift instead of disappearing before classification.
+- Description stability checks recheck visibility and loading state before claiming
+  rendered completeness. No new tools, startup modes, or application actions are added.
+
+These are offline contract improvements. They do not establish live collection
+acceptance or solve membership churn outside the bounded observed inventory.
+
 ## Inventory, cursors, and interruption semantics
 
 Restricted production search enables strict inventory verification. Standard-mode
@@ -209,34 +230,49 @@ that benefit. Keep all application tracking in the existing authoritative ledger
 
 ## Verification record
 
-Validated on Python 3.12.14 / Linux, 2026-10-15:
+Follow-up validated on Python 3.12.14 / Linux, 2026-10-15:
 
-- **640 passed, 0 failed, 0 skipped**, in **159.94 seconds**. This is 97 more tests
-  than the prior PR head's 543-test suite.
-- **85.52% total coverage with branch measurement enabled**, above the unchanged
-  85% gate (prior head: 85.12%). This is coverage.py's combined reported metric,
-  not a claim that every branch or live UI state is covered.
+- **659 passed, 0 failed, 0 skipped**, in **244.23 seconds**; 19 additional
+  regressions over the existing branch's 640-test baseline.
+- **85.54% total coverage with branch measurement enabled**, above the unchanged
+  85% gate. This is coverage.py's combined metric, not separate branch coverage
+  or a claim that every live UI state is covered.
 - Ruff format: **122 files** already formatted. Ruff lint passed. Strict Pyright:
-  **0 errors, 0 warnings**.
-- Offline lockfile validation, diff whitespace checks, and source/wheel builds
-  passed. No dependency or lockfile change was needed.
-- An intermediate full run found only a packaging contract expecting one console
-  script; the expectation now includes the dedicated discovery script. The final
-  complete run above passed after that correction and the last bounded-DOM tests.
-- Successful full output: `/tmp/linkedin-v2-full-offline.log` in the task workspace.
-  GitHub Actions status for the published head is recorded in the PR description
-  and completion report after querying GitHub; local success is not remote CI success.
+  **0 errors, 0 warnings**. Offline lockfile validation, whitespace checks, and
+  source/wheel builds passed. Dependencies and lockfile are unchanged.
+- The complete suite used installed **system Chromium 154.0.8037.57** through a
+  temporary local pytest adapter that supplies `/usr/bin/chromium` to Playwright's
+  `BrowserType.launch` and `launch_persistent_context` when no executable is set.
+  It changes no assertions, collection, test skips, or production code. The adapter
+  is `/tmp/linkedin_system_browser.py`; output is `/tmp/linkedin-offline-current.log`
+  in the development workspace. Those temporary artifacts are not packaged.
+- The pinned Playwright Chromium 151 download failed with **403 Domain forbidden**.
+  Thus this run verifies system-Chromium offline behavior; pinned-browser validation
+  and the native platform/Python-version matrix remain outstanding. No install
+  markers were fabricated and no TLS or artifact verification was disabled.
+- GitHub GraphQL and REST API queries returned **Forbidden** under the environment's
+  network policy. Git read/push access is separate. **GitHub Actions status is
+  unavailable**, and local success must not be interpreted as remote CI success.
+  Domain additions for GitHub API and official browser downloads were saved in the
+  environment configuration draft; saving does not activate or publish them.
 
-Reproduce the complete offline suite in this managed environment using the installed
-native browser cache (upstream bootstrap tests deliberately clear overrides):
+The executed full-suite command was:
 
 ```bash
-XDG_CACHE_HOME=/workspace/.cache \
-PLAYWRIGHT_BROWSERS_PATH=/workspace/.cache/ms-playwright \
-LINKEDIN_MCP_BROWSER_CACHE_PATH=/workspace/.cache/ms-playwright \
-UV_CACHE_DIR=/workspace/.cache/uv \
+PYTHONPATH=/tmp UV_CACHE_DIR=/workspace/.cache/uv \
 LINKEDIN_MCP_AUTO_LOGIN_ON_START=false \
-uv run --offline pytest --cov=linkedin_mcp --cov-branch --cov-report=term-missing
+uv run --offline pytest -p linkedin_system_browser \
+  --cov=linkedin_mcp --cov-branch --cov-report=term-missing
+```
+
+After the network configuration is activated, use the normal pinned-browser path
+without the temporary adapter and check the existing PR's Actions results:
+
+```bash
+uv sync --frozen --all-groups
+uv run playwright install chromium
+LINKEDIN_MCP_AUTO_LOGIN_ON_START=false \
+uv run pytest --cov=linkedin_mcp --cov-branch --cov-report=term-missing
 ```
 
 No non-Linux run, authenticated acceptance, deployment, external integration,

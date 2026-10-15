@@ -200,3 +200,45 @@ def test_explicit_timestamp_attribute_provenance_is_preserved() -> None:
     )
     assert result.timestamp_attributes[0].raw_datetime == "2026-10-15T12:00:00Z"
     assert result.timestamp_attributes[0].visible_label == "Posted 3 hours ago"
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "Washington residents are no longer eligible.",
+        "Not all Washington residents are eligible.",
+        "Only some Washington residents are eligible.",
+        "Employment is available in Oregon, not Washington.",
+        "We never hire Washington residents; employment is available elsewhere.",
+    ),
+)
+def test_negated_or_subset_eligibility_remains_unknown(text: str) -> None:
+    result = washington_from_description(text, complete=True)
+    assert result.status == "unknown"
+    assert result.evidence and all(e.quote in text for e in result.evidence)
+
+
+@pytest.mark.parametrize("scale", ("million", "billion", "M", "B"))
+def test_unsupported_money_scales_never_become_point_rates(scale: str) -> None:
+    offer = compensation_from_text(f"USD 1 {scale} per year")[0]
+    assert offer.minimum is None and offer.maximum is None
+    assert "unsupported_scale" in offer.uncertainties
+
+
+@pytest.mark.parametrize("label", ("Originally posted", "Originally published"))
+def test_original_date_survives_a_distinct_repost(label: str) -> None:
+    result = posting_from_visible(
+        f"{label} on 2026-09-01. Reposted 3 hours ago",
+        (("Reposted 3 hours ago", "2026-10-15T10:00:00Z"),),
+    )
+    assert str(result.posted_date) == "2026-09-01"
+    assert result.posted_at is None
+    assert result.reposted_at is not None
+    assert result.is_repost is True
+
+
+def test_repost_attribute_marks_repost_even_without_aggregate_label() -> None:
+    result = posting_from_visible("", (("Reposted", "2026-10-15T10:00:00Z"),))
+    assert result.is_repost is True
+    assert result.posted_at is None
+    assert "repost_is_not_new_job" in result.uncertainties

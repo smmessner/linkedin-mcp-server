@@ -323,7 +323,10 @@ async def _job_search_result_count(
         text = await _first_text(page.locator("main"))
     if text is None:
         return None, False
-    match = _RESULT_COUNT_PATTERN.search(text)
+    matches = list(_RESULT_COUNT_PATTERN.finditer(text))
+    if selected_only and len(matches) != 1:
+        return None, False
+    match = matches[0] if matches else None
     if match is None:
         return None, False
     return int(match.group("count").replace(",", "")), bool(match.group("plus"))
@@ -847,12 +850,25 @@ class JobSearchPage:
                         if self._verify_inventory:
                             for _ in range(3):
                                 await page.wait_for_timeout(75)
-                                current_count, _ = await _job_search_result_count(
+                                current_count, current_lower = await _job_search_result_count(
                                     page, selected_only=self._verify_inventory
                                 )
                                 counts.append(current_count)
+                                advertised_result_count_is_lower_bound |= current_lower
                             if await page.locator("main li[data-occludable-job-id]").count():
                                 issues.append("empty_inventory_still_rendering")
+                            if await page.locator(
+                                'main [aria-busy="true"], main [role="progressbar"], '
+                                "main .jobs-ghost-placeholder"
+                            ).count():
+                                issues.append("loading_not_finished")
+                            tail = page.get_by_role(
+                                "button", name=re.compile(r"^(?:show|load) more", re.I)
+                            )
+                            if any(
+                                [await tail.nth(i).is_visible() for i in range(await tail.count())]
+                            ):
+                                issues.append("tail_control_untraversed")
                         page_texts.append(await self.extract_visible_text(page))
                         terminal = True
                         stop_reason = (
@@ -977,9 +993,10 @@ class JobSearchPage:
     async def extract_visible_jobs(page: Page) -> tuple[JobSummary, ...]:
         shells = page.locator("main li[data-occludable-job-id]")
         raw_ids = await shells.evaluate_all(
-            "elements => elements.map(element => "
-            "element.getAttribute('data-occludable-job-id')).filter(Boolean)"
+            "elements => elements.map(element => element.getAttribute('data-occludable-job-id'))"
         )
+        if any(not isinstance(value, str) or not value for value in raw_ids):
+            raise ParserDriftError("LinkedIn Jobs returned a missing result-card identity.")
         job_ids = tuple(value for value in raw_ids if isinstance(value, str))
         if len(job_ids) > 500:
             raise ParserDriftError("LinkedIn Jobs exceeded the bounded raw-card inventory.")

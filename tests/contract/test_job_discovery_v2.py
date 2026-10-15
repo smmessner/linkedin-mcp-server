@@ -461,3 +461,85 @@ async def test_nested_description_clipping_prevents_complete_claim(offline_page:
     )
     _, state, _ = await description_state(offline_page.locator("#description"))
     assert state == "incomplete"
+
+
+async def test_missing_card_identity_is_not_silently_discarded(offline_page: Page) -> None:
+    await offline_page.set_content('<main><li data-occludable-job-id=""></li></main>')
+    with pytest.raises(ParserDriftError, match="missing result-card identity"):
+        await JobSearchPage.extract_visible_jobs(offline_page)
+
+
+async def test_empty_lower_bound_observed_after_initial_count_is_uncertain(
+    offline_page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import linkedin_mcp.browser.pages.jobs as jobs_module
+
+    fixture = FixtureBrowser(offline_page, search_html("", advertised=0))
+    samples = iter(((0, False), (0, True), (0, False), (0, False)))
+
+    async def count(page: Page, *, selected_only: bool = False) -> tuple[int | None, bool]:
+        return next(samples)
+
+    monkeypatch.setattr(jobs_module, "_job_search_result_count", count)
+    _, coverage, _, _ = await JobSearchPage(
+        cast(BrowserManager, fixture), max_pages=1, verify_inventory=True
+    ).collect(JobSearchInput(context_id="fixture", request_id="empty-lower-bound"))
+    assert coverage.inventory_status == "uncertain"
+    assert coverage.stop_reason == StopReason.SAFETY_BOUND
+    assert "advertised_count_is_lower_bound" in coverage.inventory_issues
+
+
+@pytest.mark.parametrize(
+    "marker",
+    (
+        '<div aria-busy="true"></div>',
+        '<div role="progressbar"></div>',
+        "<button>Load more</button>",
+    ),
+)
+async def test_zero_count_with_pending_inventory_is_not_complete(
+    offline_page: Page, marker: str
+) -> None:
+    fixture = FixtureBrowser(
+        offline_page, search_html("", advertised=0).replace("</main>", marker + "</main>")
+    )
+    _, coverage, _, _ = await JobSearchPage(
+        cast(BrowserManager, fixture), max_pages=1, verify_inventory=True
+    ).collect(JobSearchInput(context_id="fixture", request_id="pending-empty"))
+    assert coverage.inventory_status == "uncertain"
+    assert coverage.stop_reason == StopReason.SAFETY_BOUND
+
+
+async def test_competing_selected_header_counts_are_unknown(offline_page: Page) -> None:
+    a = scenarios()[0]
+    fixture = FixtureBrowser(
+        offline_page,
+        search_html(card(a), advertised=1).replace("1 results", "1 results / 9 results"),
+    )
+    _, coverage, _, _ = await JobSearchPage(
+        cast(BrowserManager, fixture), max_pages=1, verify_inventory=True
+    ).collect(JobSearchInput(context_id="fixture", request_id="ambiguous-header"))
+    assert coverage.advertised_result_count is None
+    assert coverage.inventory_status == "uncertain"
+    assert "advertised_count_unavailable" in coverage.inventory_issues
+
+
+async def test_loading_during_description_stability_check_is_unknown(
+    offline_page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from linkedin_mcp.browser.pages.job_enrichment import description_state
+
+    await offline_page.set_content('<div id="description">Visible text</div>')
+    # Trigger on the stability wait itself, avoiding a timing race with initial locator calls.
+    original_wait = offline_page.wait_for_timeout
+
+    async def start_loading(delay_ms: float) -> None:
+        await offline_page.locator("#description").evaluate(
+            "node => node.setAttribute('aria-busy', 'true')"
+        )
+        await original_wait(delay_ms)
+
+    monkeypatch.setattr(offline_page, "wait_for_timeout", start_loading)
+    _, state, reason = await description_state(offline_page.locator("#description"))
+    assert state == "unknown"
+    assert "loading" in reason
