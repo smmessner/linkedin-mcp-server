@@ -1,0 +1,14 @@
+{
+  "provenance": "synthetic_only",
+  "contains_live_data": false,
+  "contains_authentication_state": false,
+  "scenarios": [
+    {"id": "4200000001", "location": "Washington, United States", "workplace": "Remote", "title": "Platform Engineer", "employer": "Fixture Cascadia", "description": "Build reliable platform services. Remote employment is available to residents of Washington state. Compensation: USD 140,000–180,000 per year. Final complete description sentence.", "eligibility": "explicit_wa", "compensation": "USD 140,000–180,000 per year", "application_url": "https://careers.example.org/jobs/platform"},
+    {"id": "4200000002", "location": "Seattle, Washington, United States", "workplace": "Hybrid", "title": "Data Engineer", "employer": "Fixture Sound", "description": "Build data pipelines. Work onsite in Seattle three days per week. Final complete description sentence.", "eligibility": "seattle_hybrid", "compensation": null, "application_url": null},
+    {"id": "4200000003", "location": "Seattle, Washington, United States", "workplace": "On-site", "title": "Systems Engineer", "employer": "Fixture Rain", "description": "Maintain laboratory systems. Work onsite in Seattle five days per week. Final complete description sentence.", "eligibility": "seattle_onsite", "compensation": null, "application_url": null},
+    {"id": "4200000004", "location": "Sacramento, California, United States", "workplace": "Hybrid", "title": "Infrastructure Engineer", "employer": "Fixture River", "description": "Develop infrastructure tools in Sacramento. Final complete description sentence.", "eligibility": "sacramento", "compensation": null, "application_url": null},
+    {"id": "4200000005", "location": "San Diego, California, United States", "workplace": "On-site", "title": "Research Engineer", "employer": "Fixture Coast", "description": "Develop research systems in San Diego. Final complete description sentence.", "eligibility": "san_diego", "compensation": null, "application_url": null},
+    {"id": "4200000006", "location": "United States", "workplace": "Remote", "title": "Backend Engineer", "employer": "Fixture Unspecified", "description": "Build backend services. Remote role; permitted states are not specified. Final complete description sentence.", "eligibility": "unknown", "compensation": null, "application_url": null},
+    {"id": "4200000007", "location": "United States", "workplace": "Remote", "title": "Service Engineer", "employer": "Fixture Excluded", "description": "Build services. Remote employment limited to California; Washington residents are ineligible. Final complete description sentence.", "eligibility": "wa_excluded", "compensation": null, "application_url": null}
+  ]
+}

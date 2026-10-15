@@ -1,5 +1,10 @@
 # Capability Reference
 
+> `job-search-only` mode exposes only `jobs.search`, `jobs.get`, `server.status`,
+> `session.status`, and `capabilities.list` (each prefixed `linkedin.`). Other
+> tools below are available only in standard mode. See [job discovery](JOB_DISCOVERY.md)
+> for synthetic validation, unsupported fields, and integration limits.
+
 The public MCP surface is task-specific. It does not expose generic browser,
 navigation, selector, JavaScript, click, or network tools.
 

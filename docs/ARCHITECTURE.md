@@ -46,11 +46,13 @@ also keeps repeated Windows client teardown bounded in the official SDK.
 
 Every tool call is one bounded operation:
 
-1. FastMCP validates the public input schema.
+1. FastMCP resolves a registered tool and validates the public input schema.
+   Job-search-only mode registers only its five approved tools.
 2. The server binds the call to the current MCP client.
-3. The worker places it in the bounded fair scheduler.
+3. The worker checks the fixed access policy, then places it in the bounded fair scheduler.
 4. The scheduler applies global navigation pacing.
-5. The executor opens a temporary Playwright page in the shared browser
+5. The executor independently checks the access policy before replay or persistence,
+   then opens a temporary Playwright page in the shared browser
    context.
 6. A capability-specific page object navigates and uses visible controls.
 7. The executor stores process-local evidence and returns a typed result.

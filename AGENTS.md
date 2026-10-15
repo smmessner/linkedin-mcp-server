@@ -11,7 +11,9 @@
 - Do not expose generic browser, JavaScript, network, click, or navigation tools.
 - Read and account-changing capabilities are separate. Each account-changing tool is
   one complete action call. Tool availability and the MCP client's approval policy
-  are the authorization boundary; the server does not maintain a second scope,
+  govern standard mode. The optional `job-search-only` mode also enforces a fixed
+  server-side allowlist at registration, queue submission, and execution. The
+  server does not maintain a second dynamic scope,
   preview, or idempotency permission layer. Write annotations request interactive
   confirmation by default, while explicit durable per-tool client configuration may
   authorize unattended invocation.

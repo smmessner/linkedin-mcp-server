@@ -6,6 +6,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Optional fail-closed `job-search-only` mode with five MCP tools, independent
+  queue/executor enforcement, filtered capability inventory, no evidence resource,
+  disabled automatic login, and policy-aware runtime identity. Restricted job
+  searches report advertised-inventory mismatches as terminal truncation rather
+  than complete results. Add synthetic geographic/freshness characterization,
+  direct-call denial regression coverage, and a future integration plan.
+
 ### Changed
 
 - Support native Windows runtime ownership, CIM-brokered startup that survives

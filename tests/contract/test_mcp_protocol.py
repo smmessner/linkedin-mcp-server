@@ -110,6 +110,7 @@ from linkedin_mcp.domain.models import (
     StopReason,
 )
 from linkedin_mcp.persistence import MemoryRepository
+from linkedin_mcp.policy.access import AccessMode
 from linkedin_mcp.server import create_mcp_server
 
 ROOT = Path(__file__).parents[2]
@@ -648,8 +649,9 @@ class ProtocolNetwork:
         )
 
 
-def protocol_container(root: Path) -> AppContainer:
+def protocol_container(root: Path, *, access_mode: AccessMode = "standard") -> AppContainer:
     settings = Settings(
+        access_mode=access_mode,
         auto_login_on_start=False,
         browser_auto_install=False,
         browser_profile_path=root / "profile",
@@ -694,6 +696,7 @@ def protocol_container(root: Path) -> AppContainer:
         pagination=pagination,
         account_id=settings.account_id,
         call_lookup=repository.find_call,
+        access_mode=access_mode,
     )
     return AppContainer(
         settings=settings,
@@ -707,8 +710,10 @@ def protocol_container(root: Path) -> AppContainer:
 
 
 @asynccontextmanager
-async def protocol_session(root: Path) -> AsyncGenerator[ClientSession]:
-    container = protocol_container(root)
+async def protocol_session(
+    root: Path, *, access_mode: AccessMode = "standard"
+) -> AsyncGenerator[ClientSession]:
+    container = protocol_container(root, access_mode=access_mode)
     mcp = create_mcp_server(container)
     server_to_client_send, server_to_client_receive = anyio.create_memory_object_stream[
         SessionMessage
@@ -722,7 +727,7 @@ async def protocol_session(root: Path) -> AsyncGenerator[ClientSession]:
             client_to_server_receive,
             server_to_client_send,
             mcp._mcp_server.create_initialization_options(),  # pyright: ignore[reportPrivateUsage]
-            raise_exceptions=True,
+            raise_exceptions=access_mode == "standard",
         )
 
     async with anyio.create_task_group() as task_group:

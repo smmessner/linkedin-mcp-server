@@ -3228,6 +3228,7 @@ class CapabilityListOutput(StrictModel):
 
 
 class ServerStatusOutput(StrictModel):
+    access_mode: Literal["standard", "job-search-only"] = "standard"
     name: Literal["linkedin-mcp-server"] = "linkedin-mcp-server"
     version: str
     transport: Literal["stdio", "streamable-http"]

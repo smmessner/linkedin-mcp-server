@@ -21,6 +21,7 @@ from linkedin_mcp.application.pagination import (
     select_page,
 )
 from linkedin_mcp.capabilities import CapabilityRegistry
+from linkedin_mcp.capabilities.registry import CapabilityDescriptor
 from linkedin_mcp.config import Settings
 from linkedin_mcp.domain.evidence import (
     canonical_input_fingerprint,
@@ -128,6 +129,7 @@ from linkedin_mcp.errors import (
     ParserDriftError,
 )
 from linkedin_mcp.persistence.contracts import CallStart, CallStatus, Repository
+from linkedin_mcp.policy.access import AccessPolicy
 
 logger = structlog.get_logger(__name__)
 ProgressReporter = Callable[[int, int, str], Awaitable[None]]
@@ -352,6 +354,7 @@ class CapabilityExecutor:
         conversation: ConversationProvider,
         pagination: PaginationManager | None = None,
     ) -> None:
+        self._policy = AccessPolicy(settings.access_mode)
         self._settings = settings
         self._registry = registry
         self._repository = repository
@@ -377,11 +380,15 @@ class CapabilityExecutor:
             max_seen_items_per_cursor=settings.pagination_max_seen_items_per_cursor,
         )
 
+    def _authorized_descriptor(self, name: CapabilityName) -> CapabilityDescriptor:
+        self._policy.require(name.value)
+        return self._registry.get(name)
+
     async def close(self) -> None:
         await self._pagination.close()
 
     async def search_jobs(self, request: JobSearchInput) -> JobSearchOutput:
-        descriptor = self._registry.get(CapabilityName.JOBS_SEARCH)
+        descriptor = self._authorized_descriptor(CapabilityName.JOBS_SEARCH)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, JobSearchOutput)
         if replay is not None:
@@ -392,6 +399,16 @@ class CapabilityExecutor:
             jobs, coverage, captured_text, source_url = await self._job_search.collect(
                 request,
                 result_limit=self._pagination.traversal_limit(lease, request.page_size),
+            )
+            inventory_incomplete = (
+                self._policy.mode == "job-search-only"
+                and coverage.stop_reason
+                in {
+                    StopReason.VISIBLE_PAGE_COMPLETE,
+                    StopReason.NO_NEW_RESULTS,
+                }
+                and coverage.advertised_result_count is not None
+                and coverage.advertised_result_count > len(jobs)
             )
             page = select_page(
                 jobs,
@@ -408,7 +425,11 @@ class CapabilityExecutor:
                     "result_count": len(page.items),
                     "max_results": request.page_size,
                     "stop_reason": (
-                        StopReason.RESULT_LIMIT if provider_has_more else coverage.stop_reason
+                        StopReason.SAFETY_BOUND
+                        if inventory_incomplete
+                        else StopReason.RESULT_LIMIT
+                        if provider_has_more
+                        else coverage.stop_reason
                     ),
                 }
             )
@@ -423,6 +444,7 @@ class CapabilityExecutor:
                 page_size=request.page_size,
                 returned_keys=page.keys,
                 provider_has_more=provider_has_more,
+                force_truncated=inventory_incomplete,
             )
             output = JobSearchOutput(
                 context_id=request.context_id,
@@ -452,7 +474,7 @@ class CapabilityExecutor:
                 await self._pagination.abort(lease)
 
     async def get_job(self, request: JobDetailInput) -> JobDetailOutput:
-        descriptor = self._registry.get(CapabilityName.JOBS_GET)
+        descriptor = self._authorized_descriptor(CapabilityName.JOBS_GET)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, JobDetailOutput)
         if replay is not None:
@@ -483,7 +505,7 @@ class CapabilityExecutor:
             raise
 
     async def search_people(self, request: PeopleSearchInput) -> PeopleSearchOutput:
-        descriptor = self._registry.get(CapabilityName.PEOPLE_SEARCH)
+        descriptor = self._authorized_descriptor(CapabilityName.PEOPLE_SEARCH)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, PeopleSearchOutput)
         if replay is not None:
@@ -557,7 +579,7 @@ class CapabilityExecutor:
         self,
         request: ConnectionsSearchInput,
     ) -> ConnectionsSearchOutput:
-        descriptor = self._registry.get(CapabilityName.CONNECTIONS_SEARCH)
+        descriptor = self._authorized_descriptor(CapabilityName.CONNECTIONS_SEARCH)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, ConnectionsSearchOutput)
         if replay is not None:
@@ -636,7 +658,7 @@ class CapabilityExecutor:
                 await self._pagination.abort(lease)
 
     async def get_person(self, request: PeopleGetInput) -> PeopleGetOutput:
-        descriptor = self._registry.get(CapabilityName.PEOPLE_GET)
+        descriptor = self._authorized_descriptor(CapabilityName.PEOPLE_GET)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, PeopleGetOutput)
         if replay is not None:
@@ -667,7 +689,7 @@ class CapabilityExecutor:
             raise
 
     async def search_companies(self, request: CompanySearchInput) -> CompanySearchOutput:
-        descriptor = self._registry.get(CapabilityName.COMPANIES_SEARCH)
+        descriptor = self._authorized_descriptor(CapabilityName.COMPANIES_SEARCH)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, CompanySearchOutput)
         if replay is not None:
@@ -738,7 +760,7 @@ class CapabilityExecutor:
                 await self._pagination.abort(lease)
 
     async def get_company(self, request: CompanyGetInput) -> CompanyGetOutput:
-        descriptor = self._registry.get(CapabilityName.COMPANIES_GET)
+        descriptor = self._authorized_descriptor(CapabilityName.COMPANIES_GET)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, CompanyGetOutput)
         if replay is not None:
@@ -769,7 +791,7 @@ class CapabilityExecutor:
             raise
 
     async def search_posts(self, request: PostSearchInput) -> PostSearchOutput:
-        descriptor = self._registry.get(CapabilityName.POSTS_SEARCH)
+        descriptor = self._authorized_descriptor(CapabilityName.POSTS_SEARCH)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, PostSearchOutput)
         if replay is not None:
@@ -840,7 +862,7 @@ class CapabilityExecutor:
                 await self._pagination.abort(lease)
 
     async def get_post(self, request: PostGetInput) -> PostGetOutput:
-        descriptor = self._registry.get(CapabilityName.POSTS_GET)
+        descriptor = self._authorized_descriptor(CapabilityName.POSTS_GET)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, PostGetOutput)
         if replay is not None:
@@ -874,7 +896,7 @@ class CapabilityExecutor:
         self,
         request: PostCommentsListInput,
     ) -> PostCommentsListOutput:
-        descriptor = self._registry.get(CapabilityName.POST_COMMENTS_LIST)
+        descriptor = self._authorized_descriptor(CapabilityName.POST_COMMENTS_LIST)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, PostCommentsListOutput)
         if replay is not None:
@@ -949,7 +971,7 @@ class CapabilityExecutor:
         request: InvitationListInput,
         progress: ProgressReporter | None = None,
     ) -> InvitationListOutput:
-        descriptor = self._registry.get(CapabilityName.INVITATIONS_LIST)
+        descriptor = self._authorized_descriptor(CapabilityName.INVITATIONS_LIST)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, InvitationListOutput)
         if replay is not None:
@@ -1026,7 +1048,7 @@ class CapabilityExecutor:
                 await self._pagination.abort(lease)
 
     async def list_connections(self, request: ConnectionsListInput) -> ConnectionsListOutput:
-        descriptor = self._registry.get(CapabilityName.CONNECTIONS_LIST)
+        descriptor = self._authorized_descriptor(CapabilityName.CONNECTIONS_LIST)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, ConnectionsListOutput)
         if replay is not None:
@@ -1100,7 +1122,7 @@ class CapabilityExecutor:
         self,
         request: ConversationSearchInput,
     ) -> ConversationSearchOutput:
-        descriptor = self._registry.get(CapabilityName.MESSAGING_SEARCH)
+        descriptor = self._authorized_descriptor(CapabilityName.MESSAGING_SEARCH)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, ConversationSearchOutput)
         if replay is not None:
@@ -1181,7 +1203,7 @@ class CapabilityExecutor:
         self,
         request: ConversationGetInput,
     ) -> ConversationGetOutput:
-        descriptor = self._registry.get(CapabilityName.MESSAGING_CONVERSATION_GET)
+        descriptor = self._authorized_descriptor(CapabilityName.MESSAGING_CONVERSATION_GET)
         call = await self._begin_call(descriptor.name, request)
         replay = self._replayed_output(call, ConversationGetOutput)
         if replay is not None:
@@ -1335,7 +1357,7 @@ class CapabilityExecutor:
         payload: ActionPayload | None = None,
         payload_factory: Callable[[ActionInspection], ActionPayload] | None = None,
     ) -> ActionOutput:
-        descriptor = self._registry.get(capability_name)
+        descriptor = self._authorized_descriptor(capability_name)
         value = request.model_dump(mode="json")
         call = await self._repository.begin_call(
             account_id=self._settings.account_id,
